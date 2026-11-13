@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="copperGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ea580c"/>
+      <stop offset="50%" stop-color="#c2410c"/>
+      <stop offset="100%" stop-color="#7c2d12"/>
+    </linearGradient>
+  </defs>
+  <circle cx="32" cy="32" r="30" fill="url(#copperGrad)" stroke="#fed7aa" stroke-width="2"/>
+  <circle cx="32" cy="32" r="23" fill="none" stroke="#fdba74" stroke-width="1.5"/>
+  <text x="32" y="38" font-family="system-ui, sans-serif" font-weight="900" font-size="18" fill="#fff" text-anchor="middle">Cu</text>
+</svg>

@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="silverGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f1f5f9"/>
+      <stop offset="50%" stop-color="#94a3b8"/>
+      <stop offset="100%" stop-color="#475569"/>
+    </linearGradient>
+    <linearGradient id="innerSilver" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#cbd5e1"/>
+    </linearGradient>
+  </defs>
+  <circle cx="32" cy="32" r="30" fill="url(#silverGrad)" stroke="#e2e8f0" stroke-width="2"/>
+  <circle cx="32" cy="32" r="23" fill="none" stroke="#64748b" stroke-width="1.5" stroke-dasharray="2 3"/>
+  <text x="32" y="38" font-family="system-ui, sans-serif" font-weight="900" font-size="18" fill="#1e293b" text-anchor="middle">Ag</text>
+</svg>

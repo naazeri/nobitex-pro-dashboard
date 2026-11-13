@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="oilGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e293b"/>
+      <stop offset="100%" stop-color="#0f172a"/>
+    </linearGradient>
+    <linearGradient id="dropGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#fbbf24"/>
+      <stop offset="100%" stop-color="#d97706"/>
+    </linearGradient>
+  </defs>
+  <circle cx="32" cy="32" r="30" fill="url(#oilGrad)" stroke="#d97706" stroke-width="2.5"/>
+  <path d="M32 14 C32 14 20 30 20 39 A12 12 0 0 0 44 39 C44 30 32 14 32 14 Z" fill="url(#dropGrad)"/>
+  <circle cx="28" cy="36" r="3" fill="#fef3c7" opacity="0.6"/>
+</svg>
