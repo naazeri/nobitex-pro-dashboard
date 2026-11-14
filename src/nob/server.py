@@ -548,6 +548,19 @@ def api_get_candles(
     """
     clean_symbol = symbol.replace("-", "").replace("/", "").upper()
 
+    res_input = resolution.strip()
+    res_upper = res_input.upper()
+    if res_upper in ["1H", "60"]:
+        res_norm = "60"
+    elif res_upper in ["4H", "240"]:
+        res_norm = "240"
+    elif res_upper in ["1D", "D"]:
+        res_norm = "D"
+    elif res_upper in ["1W", "W"]:
+        res_norm = "1W"
+    else:
+        res_norm = res_input
+
     # Handle restricted currency pairs (USDT/IRT, DAI/IRT)
     if clean_symbol in ["USDTIRT", "DAIIRT"]:
         return {
@@ -562,20 +575,20 @@ def api_get_candles(
         to_ts = now
 
     if from_ts is None:
-        if resolution in ["D", "1W"]:
+        if res_norm in ["D", "1W"]:
             from_ts = to_ts - (365 * 86400)  # 1 year
-        elif resolution in ["60", "240"]:
+        elif res_norm in ["60", "240"]:
             from_ts = to_ts - (60 * 86400)   # 60 days
         else:
             from_ts = to_ts - (14 * 86400)   # 14 days
 
-    cache_key = f"{clean_symbol}:{resolution}:{from_ts // 60}:{to_ts // 60}"
+    cache_key = f"{clean_symbol}:{res_norm}:{from_ts // 60}:{to_ts // 60}"
     cached = _candle_cache.get(cache_key)
     if cached and cached[0] > time.time():
         return cached[1]
 
-    fetch_res = "D" if resolution == "1W" else resolution
-    fetch_from = from_ts - (7 * 86400) if resolution == "1W" else from_ts
+    fetch_res = "D" if res_norm == "1W" else res_norm
+    fetch_from = from_ts - (7 * 86400) if res_norm == "1W" else from_ts
 
     url = f"https://apiv2.nobitex.ir/market/udf/history?symbol={clean_symbol}&resolution={fetch_res}&from={fetch_from}&to={to_ts}"
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
