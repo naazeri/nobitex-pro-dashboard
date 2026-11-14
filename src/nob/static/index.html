@@ -30,10 +30,28 @@
   </script>
 
   <style>
-    /* Dynamic font switching */
-    html[dir="rtl"] body {
-      font-family: 'Vazirmatn', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    /* Dynamic font switching & typography */
+    html[dir="rtl"],
+    html[dir="rtl"] body,
+    html[dir="rtl"] button,
+    html[dir="rtl"] input,
+    html[dir="rtl"] select,
+    html[dir="rtl"] textarea,
+    html[dir="rtl"] th,
+    html[dir="rtl"] td,
+    html[dir="rtl"] h1,
+    html[dir="rtl"] h2,
+    html[dir="rtl"] h3,
+    html[dir="rtl"] span,
+    html[dir="rtl"] p,
+    html[dir="rtl"] label {
+      font-family: 'Vazirmatn', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
     }
+
+    html[dir="rtl"] .font-mono {
+      font-family: 'Vazirmatn', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+    }
+
     html[dir="ltr"] body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     }
@@ -154,7 +172,7 @@
         :class="activeTab === 'calendar' ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30' : 'bg-slate-900 text-slate-300 hover:bg-slate-800'">
         <span>{{ t('tabCalendar') }}</span>
         <span v-if="calendarSummary.winning_days > 0" class="px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] font-mono">
-          {{ calendarSummary.winning_days }}W
+          {{ calendarSummary.winning_days }}
         </span>
       </button>
 
@@ -190,7 +208,7 @@
           </div>
         </div>
         <div class="text-[11px] text-slate-400 font-mono">
-          {{ spotPeriod === '2026-10-17' ? 'BTC entry: $80,929.00 cycle' : 'Zero-cost sells ignored' }}
+          {{ spotPeriod === '2026-10-17' ? t('cycleBtcEntry') : t('cycleZeroCost') }}
         </div>
       </div>
 
@@ -407,7 +425,7 @@
         <div class="bg-slate-900/90 border border-slate-800 rounded-xl p-4 shadow-sm flex flex-col">
           <h3 class="text-sm font-semibold text-slate-200 mb-3 flex items-center justify-between">
             <span>{{ t('chartAllocationTitle') }}</span>
-            <span class="text-[11px] text-slate-500 font-mono">{{ chartsData.asset_allocation ? chartsData.asset_allocation.length : 0 }} assets</span>
+            <span class="text-[11px] text-slate-500 font-mono">{{ chartsData.asset_allocation ? chartsData.asset_allocation.length : 0 }} {{ t('kpiActiveAssets') }}</span>
           </h3>
           <div class="flex-1 flex items-center justify-center min-h-[220px] relative">
             <canvas id="chartAllocationCanvas"></canvas>
@@ -517,7 +535,7 @@
           <table class="w-full text-sm" :class="currentLang === 'fa' ? 'text-right' : 'text-left'">
             <thead class="bg-slate-950/70 text-xs text-slate-400 uppercase tracking-wider border-b border-slate-800 select-none">
               <tr>
-                <th @click="toggleHoldingsSort('symbol')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group">
+                <th @click="toggleHoldingsSort('symbol')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colAsset') }}</span>
                     <span v-if="getSortInfo(holdingsSort, 'symbol')" class="inline-flex items-center text-blue-400 font-bold font-mono">
@@ -529,7 +547,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th @click="toggleHoldingsSort('quantity')" :title="t('sortTooltip')" class="py-3 px-4 font-mono cursor-pointer hover:bg-slate-800/80 transition group">
+                <th @click="toggleHoldingsSort('quantity')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colBalance') }}</span>
                     <span v-if="getSortInfo(holdingsSort, 'quantity')" class="inline-flex items-center text-blue-400 font-bold font-mono">
@@ -541,7 +559,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th @click="toggleHoldingsSort('avg_cost')" :title="t('sortTooltip')" class="py-3 px-4 font-mono cursor-pointer hover:bg-slate-800/80 transition group">
+                <th @click="toggleHoldingsSort('avg_cost')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colAvgCost') }}</span>
                     <span v-if="getSortInfo(holdingsSort, 'avg_cost')" class="inline-flex items-center text-blue-400 font-bold font-mono">
@@ -553,7 +571,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th @click="toggleHoldingsSort('current_price')" :title="t('sortTooltip')" class="py-3 px-4 font-mono cursor-pointer hover:bg-slate-800/80 transition group">
+                <th @click="toggleHoldingsSort('current_price')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colMarketPrice') }}</span>
                     <span v-if="getSortInfo(holdingsSort, 'current_price')" class="inline-flex items-center text-blue-400 font-bold font-mono">
@@ -565,7 +583,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th @click="toggleHoldingsSort('day_change')" :title="t('sortTooltip')" class="py-3 px-4 font-mono cursor-pointer hover:bg-slate-800/80 transition group">
+                <th @click="toggleHoldingsSort('day_change')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('col24hChange') }}</span>
                     <span v-if="getSortInfo(holdingsSort, 'day_change')" class="inline-flex items-center text-blue-400 font-bold font-mono">
@@ -577,7 +595,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th @click="toggleHoldingsSort('current_value')" :title="t('sortTooltip')" class="py-3 px-4 font-mono cursor-pointer hover:bg-slate-800/80 transition group">
+                <th @click="toggleHoldingsSort('current_value')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colValue') }}</span>
                     <span v-if="getSortInfo(holdingsSort, 'current_value')" class="inline-flex items-center text-blue-400 font-bold font-mono">
@@ -589,7 +607,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th @click="toggleHoldingsSort('realized_pnl')" :title="t('sortTooltip')" class="py-3 px-4 font-mono cursor-pointer hover:bg-slate-800/80 transition group">
+                <th @click="toggleHoldingsSort('realized_pnl')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colRealizedPnl') }}</span>
                     <span v-if="getSortInfo(holdingsSort, 'realized_pnl')" class="inline-flex items-center text-blue-400 font-bold font-mono">
@@ -601,7 +619,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th @click="toggleHoldingsSort('unrealized_pnl')" :title="t('sortTooltip')" class="py-3 px-4 font-mono cursor-pointer hover:bg-slate-800/80 transition group">
+                <th @click="toggleHoldingsSort('unrealized_pnl')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colUnrealizedPnl') }}</span>
                     <span v-if="getSortInfo(holdingsSort, 'unrealized_pnl')" class="inline-flex items-center text-blue-400 font-bold font-mono">
@@ -613,7 +631,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th @click="toggleHoldingsSort('total_pnl')" :title="t('sortTooltip')" class="py-3 px-4 font-mono cursor-pointer hover:bg-slate-800/80 transition group">
+                <th @click="toggleHoldingsSort('total_pnl')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colTotalPnl') }}</span>
                     <span v-if="getSortInfo(holdingsSort, 'total_pnl')" class="inline-flex items-center text-blue-400 font-bold font-mono">
@@ -625,7 +643,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th @click="toggleHoldingsSort('pnl_pct')" :title="t('sortTooltip')" class="py-3 px-4 font-mono cursor-pointer hover:bg-slate-800/80 transition group">
+                <th @click="toggleHoldingsSort('pnl_pct')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colPnlPct') }}</span>
                     <span v-if="getSortInfo(holdingsSort, 'pnl_pct')" class="inline-flex items-center text-blue-400 font-bold font-mono">
@@ -644,31 +662,31 @@
                 <td colspan="10" class="py-8 text-center text-slate-500">{{ t('noHoldings') }}</td>
               </tr>
               <tr v-for="h in filteredHoldings" :key="h.symbol" class="hover:bg-slate-800/40 transition">
-                <td class="py-3 px-4 font-bold text-white">
+                <td class="py-3 px-4 font-bold text-white whitespace-nowrap">
                   <div class="flex items-center gap-2.5">
                     <img :src="getAssetIcon(h.symbol)" :alt="h.symbol" class="w-7 h-7 rounded-full flex-shrink-0 bg-slate-800 p-0.5 border border-slate-700/60 object-contain" @error="handleImgError($event)" />
                     <span class="tracking-wide">{{ h.symbol }}</span>
                     <span v-if="h.current_value < 1.0" class="text-[9px] px-1 py-0.2 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 font-mono">DUST</span>
                   </div>
                 </td>
-                <td class="py-3 px-4 text-slate-200">{{ formatAmount(h.quantity) }}</td>
-                <td class="py-3 px-4 text-slate-300">{{ h.avg_cost > 0 ? '$' + formatNumber(h.avg_cost) : '-' }}</td>
-                <td class="py-3 px-4 text-slate-200 font-bold">${{ formatNumber(h.current_price) }}</td>
-                <td class="py-3 px-4 font-semibold" :class="h.day_change >= 0 ? 'text-emerald-400' : 'text-rose-400'">
+                <td class="py-3 px-4 text-slate-200 whitespace-nowrap">{{ formatAmount(h.quantity) }}</td>
+                <td class="py-3 px-4 text-slate-300 whitespace-nowrap">{{ h.avg_cost > 0 ? '$' + formatNumber(h.avg_cost) : '-' }}</td>
+                <td class="py-3 px-4 text-slate-200 font-bold whitespace-nowrap">${{ formatNumber(h.current_price) }}</td>
+                <td class="py-3 px-4 font-semibold whitespace-nowrap" :class="h.day_change >= 0 ? 'text-emerald-400' : 'text-rose-400'">
                   {{ h.day_change >= 0 ? '+' : '' }}{{ h.day_change }}%
                 </td>
-                <td class="py-3 px-4 font-bold text-white">${{ formatCurrency(h.current_value) }}</td>
-                <td class="py-3 px-4" :class="h.realized_pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'">
+                <td class="py-3 px-4 font-bold text-white whitespace-nowrap">${{ formatCurrency(h.current_value) }}</td>
+                <td class="py-3 px-4 whitespace-nowrap" :class="h.realized_pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'">
                   {{ h.realized_pnl >= 0 ? '+' : '' }}${{ formatCurrency(h.realized_pnl) }}
                 </td>
-                <td class="py-3 px-4" :class="h.unrealized_pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'">
+                <td class="py-3 px-4 whitespace-nowrap" :class="h.unrealized_pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'">
                   {{ h.unrealized_pnl >= 0 ? '+' : '' }}${{ formatCurrency(h.unrealized_pnl) }}
                 </td>
-                <td class="py-3 px-4 font-bold" :class="h.total_pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'">
+                <td class="py-3 px-4 font-bold whitespace-nowrap" :class="h.total_pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'">
                   {{ h.total_pnl >= 0 ? '+' : '' }}${{ formatCurrency(h.total_pnl) }}
                 </td>
-                <td class="py-3 px-4 font-semibold">
-                  <span :class="h.pnl_pct >= 0 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border-rose-500/20'" class="px-2 py-0.5 rounded text-xs border">
+                <td class="py-3 px-4 font-semibold whitespace-nowrap">
+                  <span :class="h.pnl_pct >= 0 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border-rose-500/20'" class="px-2 py-0.5 rounded text-xs border whitespace-nowrap inline-block">
                     {{ h.pnl_pct >= 0 ? '+' : '' }}{{ h.pnl_pct.toFixed(1) }}%
                   </span>
                 </td>
@@ -733,7 +751,7 @@
             {{ positionsSummary.win_rate_pct }}%
           </div>
           <div class="text-[10px] text-slate-500 mt-1">
-            {{ positionsSummary.wins_count }} wins / {{ positionsSummary.losses_count }} losses
+            {{ t('kpiWinsLosses').replace('{wins}', positionsSummary.wins_count).replace('{losses}', positionsSummary.losses_count) }}
           </div>
         </div>
 
@@ -937,9 +955,9 @@
               </div>
 
               <div class="flex items-center justify-between text-[10px] text-slate-500 font-mono">
-                <span class="text-rose-400">0% Liq</span>
-                <span class="text-amber-400">10% Caution</span>
-                <span class="text-emerald-400">20%+ Safe</span>
+                <span class="text-rose-400">{{ t('radarScale0') }}</span>
+                <span class="text-amber-400">{{ t('radarScale10') }}</span>
+                <span class="text-emerald-400">{{ t('radarScale20') }}</span>
               </div>
             </div>
 
@@ -992,7 +1010,7 @@
           <table class="w-full text-sm" :class="currentLang === 'fa' ? 'text-right' : 'text-left'">
             <thead class="bg-slate-950/70 text-xs text-slate-400 uppercase tracking-wider border-b border-slate-800 select-none">
               <tr>
-                <th @click="toggleActivePositionsSort('id')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group">
+                <th @click="toggleActivePositionsSort('id')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colPosId') }}</span>
                     <span v-if="getSortInfo(activePositionsSort, 'id')" class="inline-flex items-center text-amber-400 font-bold font-mono">
@@ -1004,7 +1022,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th @click="toggleActivePositionsSort('src_currency')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group">
+                <th @click="toggleActivePositionsSort('src_currency')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colPosMarket') }}</span>
                     <span v-if="getSortInfo(activePositionsSort, 'src_currency')" class="inline-flex items-center text-amber-400 font-bold font-mono">
@@ -1016,7 +1034,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th @click="toggleActivePositionsSort('side')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group">
+                <th @click="toggleActivePositionsSort('side')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colPosSide') }}</span>
                     <span v-if="getSortInfo(activePositionsSort, 'side')" class="inline-flex items-center text-amber-400 font-bold font-mono">
@@ -1028,7 +1046,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th @click="toggleActivePositionsSort('leverage')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group">
+                <th @click="toggleActivePositionsSort('leverage')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colPosLeverage') }}</span>
                     <span v-if="getSortInfo(activePositionsSort, 'leverage')" class="inline-flex items-center text-amber-400 font-bold font-mono">
@@ -1040,7 +1058,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th @click="toggleActivePositionsSort('entry_price')" :title="t('sortTooltip')" class="py-3 px-4 font-mono cursor-pointer hover:bg-slate-800/80 transition group">
+                <th @click="toggleActivePositionsSort('entry_price')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colPosEntry') }}</span>
                     <span v-if="getSortInfo(activePositionsSort, 'entry_price')" class="inline-flex items-center text-amber-400 font-bold font-mono">
@@ -1052,7 +1070,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th @click="toggleActivePositionsSort('mark_price')" :title="t('sortTooltip')" class="py-3 px-4 font-mono cursor-pointer hover:bg-slate-800/80 transition group">
+                <th @click="toggleActivePositionsSort('mark_price')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colPosMark') }}</span>
                     <span v-if="getSortInfo(activePositionsSort, 'mark_price')" class="inline-flex items-center text-amber-400 font-bold font-mono">
@@ -1064,7 +1082,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th @click="toggleActivePositionsSort('liquidation_price')" :title="t('sortTooltip')" class="py-3 px-4 font-mono cursor-pointer hover:bg-slate-800/80 transition group">
+                <th @click="toggleActivePositionsSort('liquidation_price')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colPosLiq') }}</span>
                     <span v-if="getSortInfo(activePositionsSort, 'liquidation_price')" class="inline-flex items-center text-amber-400 font-bold font-mono">
@@ -1076,7 +1094,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th @click="toggleActivePositionsSort('liquidation_distance_pct')" :title="t('sortTooltip')" class="py-3 px-4 font-mono cursor-pointer hover:bg-slate-800/80 transition group">
+                <th @click="toggleActivePositionsSort('liquidation_distance_pct')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colPosRisk') }}</span>
                     <span v-if="getSortInfo(activePositionsSort, 'liquidation_distance_pct')" class="inline-flex items-center text-amber-400 font-bold font-mono">
@@ -1088,7 +1106,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th @click="toggleActivePositionsSort('collateral')" :title="t('sortTooltip')" class="py-3 px-4 font-mono cursor-pointer hover:bg-slate-800/80 transition group">
+                <th @click="toggleActivePositionsSort('collateral')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colPosCollateral') }}</span>
                     <span v-if="getSortInfo(activePositionsSort, 'collateral')" class="inline-flex items-center text-amber-400 font-bold font-mono">
@@ -1100,7 +1118,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th @click="toggleActivePositionsSort('pnl')" :title="t('sortTooltip')" class="py-3 px-4 font-mono cursor-pointer hover:bg-slate-800/80 transition group">
+                <th @click="toggleActivePositionsSort('pnl')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colPosPnl') }}</span>
                     <span v-if="getSortInfo(activePositionsSort, 'pnl')" class="inline-flex items-center text-amber-400 font-bold font-mono">
@@ -1112,7 +1130,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th @click="toggleActivePositionsSort('opened_at')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group">
+                <th @click="toggleActivePositionsSort('opened_at')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colPosOpened') }}</span>
                     <span v-if="getSortInfo(activePositionsSort, 'opened_at')" class="inline-flex items-center text-amber-400 font-bold font-mono">
@@ -1124,7 +1142,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th class="py-3 px-4 text-center">{{ t('journalCol') }}</th>
+                <th class="py-3 px-4 text-center whitespace-nowrap">{{ t('journalCol') }}</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-slate-800/60 font-mono text-xs sm:text-sm">
@@ -1139,15 +1157,15 @@
                     <span>{{ formatMarket(p.src_currency + '-' + p.dst_currency) }}</span>
                   </div>
                 </td>
-                <td class="py-3 px-4">
-                  <span :class="p.side === 'buy' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border-rose-500/20'" class="px-2 py-0.5 rounded text-xs font-semibold border">
+                <td class="py-3 px-4 whitespace-nowrap">
+                  <span :class="p.side === 'buy' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border-rose-500/20'" class="px-2 py-0.5 rounded text-xs font-semibold border whitespace-nowrap inline-block">
                     {{ p.side === 'buy' ? t('badgeLong') : t('badgeShort') }}
                   </span>
                 </td>
-                <td class="py-3 px-4 font-bold text-amber-400">x{{ p.leverage }}</td>
-                <td class="py-3 px-4 text-slate-200">{{ formatPositionPrice(p.entry_price, p.dst_currency) }}</td>
-                <td class="py-3 px-4 text-slate-300">{{ formatPositionPrice(p.mark_price || p.entry_price, p.dst_currency) }}</td>
-                <td class="py-3 px-4 text-rose-400 font-semibold">{{ formatPositionPrice(p.liquidation_price, p.dst_currency) }}</td>
+                <td class="py-3 px-4 font-bold text-amber-400 whitespace-nowrap">x{{ p.leverage }}</td>
+                <td class="py-3 px-4 text-slate-200 whitespace-nowrap">{{ formatPositionPrice(p.entry_price, p.dst_currency) }}</td>
+                <td class="py-3 px-4 text-slate-300 whitespace-nowrap">{{ formatPositionPrice(p.mark_price || p.entry_price, p.dst_currency) }}</td>
+                <td class="py-3 px-4 text-rose-400 font-semibold whitespace-nowrap">{{ formatPositionPrice(p.liquidation_price, p.dst_currency) }}</td>
                 
                 <!-- Risk & Liquidation Distance Column -->
                 <td class="py-3 px-4 min-w-[140px]">
@@ -1221,7 +1239,7 @@
           <table class="w-full text-sm" :class="currentLang === 'fa' ? 'text-right' : 'text-left'">
             <thead class="bg-slate-950/70 text-xs text-slate-400 uppercase tracking-wider border-b border-slate-800 select-none">
               <tr>
-                <th @click="togglePastPositionsSort('id')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group">
+                <th @click="togglePastPositionsSort('id')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colPosId') }}</span>
                     <span v-if="getSortInfo(pastPositionsSort, 'id')" class="inline-flex items-center text-amber-400 font-bold font-mono">
@@ -1233,7 +1251,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th @click="togglePastPositionsSort('src_currency')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group">
+                <th @click="togglePastPositionsSort('src_currency')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colPosMarket') }}</span>
                     <span v-if="getSortInfo(pastPositionsSort, 'src_currency')" class="inline-flex items-center text-amber-400 font-bold font-mono">
@@ -1245,7 +1263,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th @click="togglePastPositionsSort('side')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group">
+                <th @click="togglePastPositionsSort('side')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colPosSide') }}</span>
                     <span v-if="getSortInfo(pastPositionsSort, 'side')" class="inline-flex items-center text-amber-400 font-bold font-mono">
@@ -1257,7 +1275,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th @click="togglePastPositionsSort('leverage')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group">
+                <th @click="togglePastPositionsSort('leverage')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colPosLeverage') }}</span>
                     <span v-if="getSortInfo(pastPositionsSort, 'leverage')" class="inline-flex items-center text-amber-400 font-bold font-mono">
@@ -1269,7 +1287,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th @click="togglePastPositionsSort('entry_price')" :title="t('sortTooltip')" class="py-3 px-4 font-mono cursor-pointer hover:bg-slate-800/80 transition group">
+                <th @click="togglePastPositionsSort('entry_price')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colPosEntry') }}</span>
                     <span v-if="getSortInfo(pastPositionsSort, 'entry_price')" class="inline-flex items-center text-amber-400 font-bold font-mono">
@@ -1281,7 +1299,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th @click="togglePastPositionsSort('exit_price')" :title="t('sortTooltip')" class="py-3 px-4 font-mono cursor-pointer hover:bg-slate-800/80 transition group">
+                <th @click="togglePastPositionsSort('exit_price')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colPosExit') }}</span>
                     <span v-if="getSortInfo(pastPositionsSort, 'exit_price')" class="inline-flex items-center text-amber-400 font-bold font-mono">
@@ -1293,7 +1311,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th @click="togglePastPositionsSort('pnl')" :title="t('sortTooltip')" class="py-3 px-4 font-mono cursor-pointer hover:bg-slate-800/80 transition group">
+                <th @click="togglePastPositionsSort('pnl')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colPosPnl') }}</span>
                     <span v-if="getSortInfo(pastPositionsSort, 'pnl')" class="inline-flex items-center text-amber-400 font-bold font-mono">
@@ -1305,7 +1323,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th @click="togglePastPositionsSort('pnl_percent')" :title="t('sortTooltip')" class="py-3 px-4 font-mono cursor-pointer hover:bg-slate-800/80 transition group">
+                <th @click="togglePastPositionsSort('pnl_percent')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colPosRoi') }}</span>
                     <span v-if="getSortInfo(pastPositionsSort, 'pnl_percent')" class="inline-flex items-center text-amber-400 font-bold font-mono">
@@ -1317,7 +1335,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th @click="togglePastPositionsSort('opened_at')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group">
+                <th @click="togglePastPositionsSort('opened_at')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colPosOpened') }}</span>
                     <span v-if="getSortInfo(pastPositionsSort, 'opened_at')" class="inline-flex items-center text-amber-400 font-bold font-mono">
@@ -1329,7 +1347,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th @click="togglePastPositionsSort('closed_at')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group">
+                <th @click="togglePastPositionsSort('closed_at')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colPosClosed') }}</span>
                     <span v-if="getSortInfo(pastPositionsSort, 'closed_at')" class="inline-flex items-center text-amber-400 font-bold font-mono">
@@ -1341,7 +1359,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th @click="togglePastPositionsSort('status')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group">
+                <th @click="togglePastPositionsSort('status')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colPosStatus') }}</span>
                     <span v-if="getSortInfo(pastPositionsSort, 'status')" class="inline-flex items-center text-amber-400 font-bold font-mono">
@@ -1353,7 +1371,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th class="py-3 px-4 text-center">{{ t('journalCol') }}</th>
+                <th class="py-3 px-4 text-center whitespace-nowrap">{{ t('journalCol') }}</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-slate-800/60 font-mono text-xs sm:text-sm">
@@ -1368,26 +1386,26 @@
                     <span>{{ formatMarket(p.src_currency + '-' + p.dst_currency) }}</span>
                   </div>
                 </td>
-                <td class="py-3 px-4">
-                  <span :class="p.side === 'buy' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border-rose-500/20'" class="px-2 py-0.5 rounded text-xs font-semibold border">
+                <td class="py-3 px-4 whitespace-nowrap">
+                  <span :class="p.side === 'buy' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border-rose-500/20'" class="px-2 py-0.5 rounded text-xs font-semibold border whitespace-nowrap inline-block">
                     {{ p.side === 'buy' ? t('badgeLong') : t('badgeShort') }}
                   </span>
                 </td>
-                <td class="py-3 px-4 font-bold text-amber-400">x{{ p.leverage }}</td>
-                <td class="py-3 px-4 text-slate-200">{{ formatPositionPrice(p.entry_price, p.dst_currency) }}</td>
-                <td class="py-3 px-4 text-slate-200 font-bold">{{ formatPositionPrice(p.exit_price, p.dst_currency) }}</td>
-                <td class="py-3 px-4 font-bold" :class="p.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'">
+                <td class="py-3 px-4 font-bold text-amber-400 whitespace-nowrap">x{{ p.leverage }}</td>
+                <td class="py-3 px-4 text-slate-200 whitespace-nowrap">{{ formatPositionPrice(p.entry_price, p.dst_currency) }}</td>
+                <td class="py-3 px-4 text-slate-200 font-bold whitespace-nowrap">{{ formatPositionPrice(p.exit_price, p.dst_currency) }}</td>
+                <td class="py-3 px-4 font-bold whitespace-nowrap" :class="p.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'">
                   {{ formatPositionPnl(p.pnl, p.dst_currency) }}
                 </td>
-                <td class="py-3 px-4 font-semibold">
-                  <span :class="p.pnl_percent >= 0 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border-rose-500/20'" class="px-2 py-0.5 rounded text-xs border">
+                <td class="py-3 px-4 font-semibold whitespace-nowrap">
+                  <span :class="p.pnl_percent >= 0 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border-rose-500/20'" class="px-2 py-0.5 rounded text-xs border whitespace-nowrap">
                     {{ p.pnl_percent >= 0 ? '+' : '' }}{{ p.pnl_percent }}%
                   </span>
                 </td>
-                <td class="py-3 px-4 text-slate-400 text-xs">{{ formatTimestamp(p.opened_at) }}</td>
-                <td class="py-3 px-4 text-slate-400 text-xs">{{ formatTimestamp(p.closed_at) }}</td>
-                <td class="py-3 px-4">
-                  <span :class="p.status === 'Liquidated' ? 'text-rose-400 bg-rose-500/10 border-rose-500/20' : 'text-slate-300 bg-slate-800 border-slate-700'" class="px-2 py-0.5 rounded text-[11px] border">
+                <td class="py-3 px-4 text-slate-400 text-xs whitespace-nowrap">{{ formatTimestamp(p.opened_at) }}</td>
+                <td class="py-3 px-4 text-slate-400 text-xs whitespace-nowrap">{{ formatTimestamp(p.closed_at) }}</td>
+                <td class="py-3 px-4 whitespace-nowrap">
+                  <span :class="p.status === 'Liquidated' ? 'text-rose-400 bg-rose-500/10 border-rose-500/20' : 'text-slate-300 bg-slate-800 border-slate-700'" class="px-2 py-0.5 rounded text-[11px] border whitespace-nowrap inline-block">
                     {{ p.status === 'Liquidated' ? t('statusLiquidated') : t('statusClosed') }}
                   </span>
                 </td>
@@ -1693,40 +1711,40 @@
               <table class="w-full text-xs" :class="currentLang === 'fa' ? 'text-right' : 'text-left'">
                 <thead class="bg-slate-950 text-[11px] text-slate-400 uppercase tracking-wider border-b border-slate-800">
                   <tr>
-                    <th class="py-2.5 px-3">{{ t('colMarket') }}</th>
-                    <th class="py-2.5 px-3">{{ t('colSide') }}</th>
-                    <th class="py-2.5 px-3">{{ t('colAmount') }}</th>
-                    <th class="py-2.5 px-3">{{ t('colMarketPrice') }}</th>
-                    <th class="py-2.5 px-3">{{ t('colTotal') }}</th>
-                    <th class="py-2.5 px-3">{{ t('colTotalPnl') }}</th>
-                    <th class="py-2.5 px-3">{{ t('colFee') }}</th>
-                    <th class="py-2.5 px-3">{{ t('colTime') }}</th>
-                    <th class="py-2.5 px-3 text-center">{{ t('journalCol') }}</th>
+                    <th class="py-2.5 px-3 whitespace-nowrap">{{ t('colMarket') }}</th>
+                    <th class="py-2.5 px-3 whitespace-nowrap">{{ t('colSide') }}</th>
+                    <th class="py-2.5 px-3 whitespace-nowrap">{{ t('colAmount') }}</th>
+                    <th class="py-2.5 px-3 whitespace-nowrap">{{ t('colMarketPrice') }}</th>
+                    <th class="py-2.5 px-3 whitespace-nowrap">{{ t('colTotal') }}</th>
+                    <th class="py-2.5 px-3 whitespace-nowrap">{{ t('colTotalPnl') }}</th>
+                    <th class="py-2.5 px-3 whitespace-nowrap">{{ t('colFee') }}</th>
+                    <th class="py-2.5 px-3 whitespace-nowrap">{{ t('colTime') }}</th>
+                    <th class="py-2.5 px-3 text-center whitespace-nowrap">{{ t('journalCol') }}</th>
                   </tr>
                 </thead>
                 <tbody class="divide-y divide-slate-800/60">
                   <tr v-for="trade in selectedDayData.stats.spot_trades" :key="trade.id" class="hover:bg-slate-800/40 transition">
-                    <td class="py-2 px-3 font-bold text-slate-200">
+                    <td class="py-2 px-3 font-bold text-slate-200 whitespace-nowrap">
                       <div class="flex items-center gap-1.5">
                         <img :src="getMarketBaseIcon(trade.market)" class="w-4 h-4 rounded-full bg-slate-800 object-contain" @error="handleImgError($event)" />
                         <span>{{ formatMarket(trade.market) }}</span>
                       </div>
                     </td>
-                    <td class="py-2 px-3">
-                      <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                    <td class="py-2 px-3 whitespace-nowrap">
+                      <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/20 whitespace-nowrap inline-block">
                         {{ t('sideSell') }}
                       </span>
                     </td>
-                    <td class="py-2 px-3 font-mono text-slate-100">{{ formatAmount(trade.amount) }}</td>
-                    <td class="py-2 px-3 font-mono text-slate-300">${{ formatCurrency(trade.price, 2) }}</td>
-                    <td class="py-2 px-3 font-mono font-medium text-slate-200">${{ formatCurrency(trade.total, 2) }}</td>
-                    <td class="py-2 px-3 font-mono font-bold" :class="trade.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'">
+                    <td class="py-2 px-3 font-mono text-slate-100 whitespace-nowrap">{{ formatAmount(trade.amount) }}</td>
+                    <td class="py-2 px-3 font-mono text-slate-300 whitespace-nowrap">${{ formatCurrency(trade.price, 2) }}</td>
+                    <td class="py-2 px-3 font-mono font-medium text-slate-200 whitespace-nowrap">${{ formatCurrency(trade.total, 2) }}</td>
+                    <td class="py-2 px-3 font-mono font-bold whitespace-nowrap" :class="trade.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'">
                       <span>{{ trade.pnl >= 0 ? '+' : '' }}${{ formatCurrency(trade.pnl, 2) }}</span>
                       <span class="text-[10px] opacity-75 ml-1">({{ trade.pnl_pct >= 0 ? '+' : '' }}{{ trade.pnl_pct }}%)</span>
                     </td>
-                    <td class="py-2 px-3 font-mono text-slate-400">${{ formatCurrency(trade.fee, 4) }}</td>
-                    <td class="py-2 px-3 text-slate-400 font-mono text-[11px]">{{ formatTimestamp(trade.timestamp).split(' ')[1] || trade.timestamp }}</td>
-                    <td class="py-2 px-3 text-center">
+                    <td class="py-2 px-3 font-mono text-slate-400 whitespace-nowrap">${{ formatCurrency(trade.fee, 4) }}</td>
+                    <td class="py-2 px-3 text-slate-400 font-mono text-[11px] whitespace-nowrap">{{ formatTimestamp(trade.timestamp).split(' ')[1] || trade.timestamp }}</td>
+                    <td class="py-2 px-3 text-center whitespace-nowrap">
                       <button 
                         @click="openJournalModal('trade', trade)"
                         class="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-indigo-400 transition cursor-pointer text-xs"
@@ -1756,38 +1774,38 @@
               <table class="w-full text-xs" :class="currentLang === 'fa' ? 'text-right' : 'text-left'">
                 <thead class="bg-slate-950 text-[11px] text-slate-400 uppercase tracking-wider border-b border-slate-800">
                   <tr>
-                    <th class="py-2.5 px-3">{{ t('colPosMarket') }}</th>
-                    <th class="py-2.5 px-3">{{ t('colPosSide') }}</th>
-                    <th class="py-2.5 px-3">{{ t('colPosLeverage') }}</th>
-                    <th class="py-2.5 px-3">{{ t('colPosEntry') }}</th>
-                    <th class="py-2.5 px-3">{{ t('colPosExit') }}</th>
-                    <th class="py-2.5 px-3">{{ t('colPosPnl') }}</th>
-                    <th class="py-2.5 px-3">{{ t('colPosClosed') }}</th>
-                    <th class="py-2.5 px-3 text-center">{{ t('journalCol') }}</th>
+                    <th class="py-2.5 px-3 whitespace-nowrap">{{ t('colPosMarket') }}</th>
+                    <th class="py-2.5 px-3 whitespace-nowrap">{{ t('colPosSide') }}</th>
+                    <th class="py-2.5 px-3 whitespace-nowrap">{{ t('colPosLeverage') }}</th>
+                    <th class="py-2.5 px-3 whitespace-nowrap">{{ t('colPosEntry') }}</th>
+                    <th class="py-2.5 px-3 whitespace-nowrap">{{ t('colPosExit') }}</th>
+                    <th class="py-2.5 px-3 whitespace-nowrap">{{ t('colPosPnl') }}</th>
+                    <th class="py-2.5 px-3 whitespace-nowrap">{{ t('colPosClosed') }}</th>
+                    <th class="py-2.5 px-3 text-center whitespace-nowrap">{{ t('journalCol') }}</th>
                   </tr>
                 </thead>
                 <tbody class="divide-y divide-slate-800/60">
                   <tr v-for="pos in selectedDayData.stats.futures_positions" :key="pos.id" class="hover:bg-slate-800/40 transition">
-                    <td class="py-2 px-3 font-bold text-slate-200">
+                    <td class="py-2 px-3 font-bold text-slate-200 whitespace-nowrap">
                       <div class="flex items-center gap-1.5">
                         <img :src="getMarketBaseIcon(pos.market)" class="w-4 h-4 rounded-full bg-slate-800 object-contain" @error="handleImgError($event)" />
                         <span>{{ formatMarket(pos.market) }}</span>
                       </div>
                     </td>
-                    <td class="py-2 px-3">
-                      <span :class="pos.side === 'buy' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border-rose-500/20'" class="px-1.5 py-0.5 rounded text-[10px] font-semibold border">
+                    <td class="py-2 px-3 whitespace-nowrap">
+                      <span :class="pos.side === 'buy' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border-rose-500/20'" class="px-1.5 py-0.5 rounded text-[10px] font-semibold border whitespace-nowrap inline-block">
                         {{ pos.side === 'buy' ? t('badgeLong') : t('badgeShort') }}
                       </span>
                     </td>
-                    <td class="py-2 px-3 font-mono font-bold text-amber-400">{{ pos.leverage }}x</td>
-                    <td class="py-2 px-3 font-mono text-slate-300">${{ formatCurrency(pos.entry_price, 2) }}</td>
-                    <td class="py-2 px-3 font-mono text-slate-200">${{ formatCurrency(pos.exit_price, 2) }}</td>
-                    <td class="py-2 px-3 font-mono font-bold" :class="pos.pnl_usdt >= 0 ? 'text-emerald-400' : 'text-rose-400'">
+                    <td class="py-2 px-3 font-mono font-bold text-amber-400 whitespace-nowrap">{{ pos.leverage }}x</td>
+                    <td class="py-2 px-3 font-mono text-slate-300 whitespace-nowrap">${{ formatCurrency(pos.entry_price, 2) }}</td>
+                    <td class="py-2 px-3 font-mono text-slate-200 whitespace-nowrap">${{ formatCurrency(pos.exit_price, 2) }}</td>
+                    <td class="py-2 px-3 font-mono font-bold whitespace-nowrap" :class="pos.pnl_usdt >= 0 ? 'text-emerald-400' : 'text-rose-400'">
                       <span>{{ pos.pnl_usdt >= 0 ? '+' : '' }}${{ formatCurrency(pos.pnl_usdt, 2) }}</span>
                       <span class="text-[10px] opacity-75 ml-1">({{ pos.pnl_percent >= 0 ? '+' : '' }}{{ pos.pnl_percent }}%)</span>
                     </td>
-                    <td class="py-2 px-3 text-slate-400 font-mono text-[11px]">{{ formatTimestamp(pos.closed_at).split(' ')[1] || pos.closed_at }}</td>
-                    <td class="py-2 px-3 text-center">
+                    <td class="py-2 px-3 text-slate-400 font-mono text-[11px] whitespace-nowrap">{{ formatTimestamp(pos.closed_at).split(' ')[1] || pos.closed_at }}</td>
+                    <td class="py-2 px-3 text-center whitespace-nowrap">
                       <button 
                         @click="openJournalModal('position', pos)"
                         class="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-indigo-400 transition cursor-pointer text-xs"
@@ -1832,7 +1850,7 @@
 
           <!-- Active Filter Pill if tag is selected -->
           <div v-if="filters.tag" class="flex items-center gap-2">
-            <span class="text-xs text-slate-400">فیلتر فعال:</span>
+            <span class="text-xs text-slate-400">{{ t('activeFilter') }}</span>
             <span class="px-2.5 py-1 rounded-lg text-xs font-bold bg-indigo-600 text-white flex items-center gap-1.5 shadow">
               <span>🏷️ {{ filters.tag }}</span>
               <button @click="filters.tag = ''; onFilterChange()" class="hover:text-rose-300 font-bold text-xs ml-1 cursor-pointer">✕</button>
@@ -1962,7 +1980,7 @@
           <table class="w-full text-sm" :class="currentLang === 'fa' ? 'text-right' : 'text-left'">
             <thead class="bg-slate-950/80 text-xs text-slate-400 uppercase tracking-wider border-b border-slate-800 select-none">
               <tr>
-                <th @click="toggleTradeSort('id')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group">
+                <th @click="toggleTradeSort('id')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colId') }}</span>
                     <span v-if="getSortInfo(tradeSorts, 'id')" class="inline-flex items-center text-blue-400 font-bold font-mono">
@@ -1974,7 +1992,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th @click="toggleTradeSort('order_id')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group">
+                <th @click="toggleTradeSort('order_id')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colOrder') }}</span>
                     <span v-if="getSortInfo(tradeSorts, 'order_id')" class="inline-flex items-center text-blue-400 font-bold font-mono">
@@ -1986,7 +2004,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th @click="toggleTradeSort('trade_type')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group">
+                <th @click="toggleTradeSort('trade_type')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colExecType') }}</span>
                     <span v-if="getSortInfo(tradeSorts, 'trade_type')" class="inline-flex items-center text-blue-400 font-bold font-mono">
@@ -1998,7 +2016,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th @click="toggleTradeSort('market')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group">
+                <th @click="toggleTradeSort('market')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colMarket') }}</span>
                     <span v-if="getSortInfo(tradeSorts, 'market')" class="inline-flex items-center text-blue-400 font-bold font-mono">
@@ -2010,7 +2028,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th @click="toggleTradeSort('type')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group">
+                <th @click="toggleTradeSort('type')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colSide') }}</span>
                     <span v-if="getSortInfo(tradeSorts, 'type')" class="inline-flex items-center text-blue-400 font-bold font-mono">
@@ -2022,7 +2040,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th @click="toggleTradeSort('timestamp')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group">
+                <th @click="toggleTradeSort('timestamp')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colTime') }}</span>
                     <span v-if="getSortInfo(tradeSorts, 'timestamp')" class="inline-flex items-center text-blue-400 font-bold font-mono">
@@ -2034,7 +2052,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th @click="toggleTradeSort('price')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group font-mono">
+                <th @click="toggleTradeSort('price')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colUnitPrice') }}</span>
                     <span v-if="getSortInfo(tradeSorts, 'price')" class="inline-flex items-center text-blue-400 font-bold font-mono">
@@ -2046,7 +2064,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th @click="toggleTradeSort('amount')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group font-mono">
+                <th @click="toggleTradeSort('amount')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colAmount') }}</span>
                     <span v-if="getSortInfo(tradeSorts, 'amount')" class="inline-flex items-center text-blue-400 font-bold font-mono">
@@ -2058,7 +2076,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th @click="toggleTradeSort('total')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group font-mono">
+                <th @click="toggleTradeSort('total')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colTotal') }}</span>
                     <span v-if="getSortInfo(tradeSorts, 'total')" class="inline-flex items-center text-blue-400 font-bold font-mono">
@@ -2070,7 +2088,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th @click="toggleTradeSort('fee')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group font-mono">
+                <th @click="toggleTradeSort('fee')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colFee') }}</span>
                     <span v-if="getSortInfo(tradeSorts, 'fee')" class="inline-flex items-center text-blue-400 font-bold font-mono">
@@ -2082,7 +2100,7 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
-                <th class="py-3 px-4 text-center">{{ t('journalCol') }}</th>
+                <th class="py-3 px-4 text-center whitespace-nowrap">{{ t('journalCol') }}</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-slate-800/60 font-mono text-xs sm:text-sm">
@@ -2093,35 +2111,35 @@
                 <td colspan="11" class="py-12 text-center text-slate-400">{{ t('noTradesFound') }}</td>
               </tr>
               <tr v-for="trade in trades" :key="trade.id" class="hover:bg-slate-800/40 transition">
-                <td class="py-3 px-4 text-slate-400">{{ trade.id }}</td>
-                <td class="py-3 px-4 text-slate-500">{{ trade.order_id || '-' }}</td>
-                <td class="py-3 px-4">
-                  <span :class="trade.trade_type === 'Margin' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-blue-500/10 text-blue-400 border-blue-500/20'" class="px-2 py-0.5 rounded text-[11px] font-semibold border">
+                <td class="py-3 px-4 text-slate-400 whitespace-nowrap">{{ trade.id }}</td>
+                <td class="py-3 px-4 text-slate-500 whitespace-nowrap">{{ trade.order_id || '-' }}</td>
+                <td class="py-3 px-4 whitespace-nowrap">
+                  <span :class="trade.trade_type === 'Margin' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-blue-500/10 text-blue-400 border-blue-500/20'" class="px-2 py-0.5 rounded text-[11px] font-semibold border whitespace-nowrap inline-block">
                     {{ trade.trade_type === 'Margin' ? t('execMargin') : t('execSpot') }}
                   </span>
                 </td>
-                <td class="py-3 px-4 font-bold text-slate-200">
+                <td class="py-3 px-4 font-bold text-slate-200 whitespace-nowrap">
                   <div class="flex items-center gap-2">
                     <img :src="getMarketBaseIcon(trade.market)" class="w-5 h-5 rounded-full flex-shrink-0 bg-slate-800 p-0.5 object-contain" @error="handleImgError($event)" />
                     <span>{{ formatMarket(trade.market) }}</span>
                   </div>
                 </td>
-                <td class="py-3 px-4">
-                  <span :class="trade.type === 'buy' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border-rose-500/20'" class="px-2 py-0.5 rounded text-xs font-semibold border">
+                <td class="py-3 px-4 whitespace-nowrap">
+                  <span :class="trade.type === 'buy' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border-rose-500/20'" class="px-2 py-0.5 rounded text-xs font-semibold border whitespace-nowrap inline-block">
                     {{ trade.type === 'buy' ? t('sideBuy') : t('sideSell') }}
                   </span>
                 </td>
-                <td class="py-3 px-4 text-slate-400">{{ formatTimestamp(trade.timestamp) }}</td>
-                <td class="py-3 px-4 text-slate-200">{{ formatTradePrice(trade.price, trade.market) }}</td>
-                <td class="py-3 px-4 font-medium text-slate-100">{{ formatAmount(trade.amount) }}</td>
-                <td class="py-3 px-4 font-bold text-slate-200">{{ formatTradeTotal(trade.total, trade.market) }}</td>
-                <td class="py-3 px-4 text-slate-400">{{ formatTradeFee(trade.fee, trade.market, trade.type, trade.src_currency) }}</td>
-                <td class="py-3 px-4 text-center">
+                <td class="py-3 px-4 text-slate-400 whitespace-nowrap">{{ formatTimestamp(trade.timestamp) }}</td>
+                <td class="py-3 px-4 text-slate-200 whitespace-nowrap">{{ formatTradePrice(trade.price, trade.market) }}</td>
+                <td class="py-3 px-4 font-medium text-slate-100 whitespace-nowrap">{{ formatAmount(trade.amount) }}</td>
+                <td class="py-3 px-4 font-bold text-slate-200 whitespace-nowrap">{{ formatTradeTotal(trade.total, trade.market) }}</td>
+                <td class="py-3 px-4 text-slate-400 whitespace-nowrap">{{ formatTradeFee(trade.fee, trade.market, trade.type, trade.src_currency) }}</td>
+                <td class="py-3 px-4 text-center whitespace-nowrap">
                   <button 
                     v-if="trade.journal || journalMap['trade:' + trade.id]" 
                     @click="openJournalModal('trade', trade)"
                     :title="t('journalEditNote') + ': ' + ((trade.journal || journalMap['trade:' + trade.id]).notes || '')"
-                    class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-500/15 hover:bg-indigo-500/25 border border-indigo-500/30 text-indigo-300 text-xs font-semibold transition cursor-pointer group">
+                    class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-500/15 hover:bg-indigo-500/25 border border-indigo-500/30 text-indigo-300 text-xs font-semibold transition cursor-pointer group whitespace-nowrap">
                     <span class="group-hover:scale-110 transition-transform">📝</span>
                     <span v-if="(trade.journal || journalMap['trade:' + trade.id]).tags?.length" class="max-w-[70px] truncate text-[10px] font-mono text-indigo-200">
                       {{ (trade.journal || journalMap['trade:' + trade.id]).tags[0] }}
@@ -2718,7 +2736,7 @@
 
             <!-- Selected Tags List (with delete badge) -->
             <div v-if="journalForm.tags.length > 0" class="flex flex-wrap items-center gap-1.5 pt-2">
-              <span class="text-[11px] text-slate-400">تگ‌های انتخاب شده:</span>
+              <span class="text-[11px] text-slate-400">{{ t('journalSelectedTags') }}</span>
               <span 
                 v-for="tg in journalForm.tags" 
                 :key="tg"
@@ -2747,7 +2765,7 @@
               <button 
                 type="button" 
                 @click="setJournalRating(1)"
-                class="py-2 px-3 rounded-xl border text-xs font-semibold transition cursor-pointer flex items-center justify-center gap-2"
+                class="py-2 px-3 rounded-xl border text-xs font-semibold transition cursor-pointer flex items-center justify-center gap-2 whitespace-nowrap"
                 :class="journalForm.rating === 1 ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300' : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'">
                 <span>🟢</span>
                 <span>{{ t('journalMoodDisciplined') }}</span>
@@ -2755,7 +2773,7 @@
               <button 
                 type="button" 
                 @click="setJournalRating(2)"
-                class="py-2 px-3 rounded-xl border text-xs font-semibold transition cursor-pointer flex items-center justify-center gap-2"
+                class="py-2 px-3 rounded-xl border text-xs font-semibold transition cursor-pointer flex items-center justify-center gap-2 whitespace-nowrap"
                 :class="journalForm.rating === 2 ? 'bg-amber-500/20 border-amber-500 text-amber-300' : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'">
                 <span>🟡</span>
                 <span>{{ t('journalMoodImpulsive') }}</span>
@@ -2763,7 +2781,7 @@
               <button 
                 type="button" 
                 @click="setJournalRating(3)"
-                class="py-2 px-3 rounded-xl border text-xs font-semibold transition cursor-pointer flex items-center justify-center gap-2"
+                class="py-2 px-3 rounded-xl border text-xs font-semibold transition cursor-pointer flex items-center justify-center gap-2 whitespace-nowrap"
                 :class="journalForm.rating === 3 ? 'bg-rose-500/20 border-rose-500 text-rose-300' : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'">
                 <span>🔴</span>
                 <span>{{ t('journalMoodEmotional') }}</span>
