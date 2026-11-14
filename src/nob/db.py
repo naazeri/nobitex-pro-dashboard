@@ -133,6 +133,7 @@ def init_db(db_path: Optional[Path] = None):
                 pnl REAL,
                 pnl_percent REAL,
                 pool_pnl_share REAL,
+                extension_fee REAL DEFAULT 0,
                 opened_at TEXT,
                 closed_at TEXT,
                 created_at TEXT,
@@ -176,6 +177,12 @@ def init_db(db_path: Optional[Path] = None):
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
         """)
+
+        # Schema migrations
+        try:
+            cursor.execute("ALTER TABLE positions ADD COLUMN extension_fee REAL DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
 
         conn.commit()
 
@@ -659,6 +666,15 @@ def get_all_crypto_trades_chronological(
         return [dict(row) for row in cursor.fetchall()]
 
 
+def get_margin_trades(db_path: Optional[Path] = None) -> List[Dict[str, Any]]:
+    """Retrieve all margin trades from database."""
+    init_db(db_path)
+    with get_db_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM trades WHERE trade_type = 'Margin' ORDER BY timestamp ASC")
+        return [dict(row) for row in cursor.fetchall()]
+
+
 def upsert_positions(positions: List[Dict[str, Any]], db_path: Optional[Path] = None) -> int:
     """Store or update margin/leverage positions in SQLite."""
     if not positions:
@@ -696,6 +712,7 @@ def upsert_positions(positions: List[Dict[str, Any]], db_path: Optional[Path] = 
             pnl = to_float(p.get("PNL", p.get("unrealizedPNL")), 0.0)
             pnl_pct = to_float(p.get("PNLPercent", p.get("unrealizedPNLPercent")), 0.0)
             pool_share = to_float(p.get("poolPNLShare"), 0.0)
+            extension_fee = to_float(p.get("extensionFee", p.get("extension_fee")), 0.0)
 
             opened_at = p.get("openedAt")
             closed_at = p.get("closedAt")
@@ -706,9 +723,9 @@ def upsert_positions(positions: List[Dict[str, Any]], db_path: Optional[Path] = 
                 INSERT OR REPLACE INTO positions (
                     id, status, side, src_currency, dst_currency, margin_type,
                     leverage, collateral, entry_price, exit_price, liquidation_price,
-                    mark_price, pnl, pnl_percent, pool_pnl_share, opened_at,
+                    mark_price, pnl, pnl_percent, pool_pnl_share, extension_fee, opened_at,
                     closed_at, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     pos_id,
@@ -726,6 +743,7 @@ def upsert_positions(positions: List[Dict[str, Any]], db_path: Optional[Path] = 
                     pnl,
                     pnl_pct,
                     pool_share,
+                    extension_fee,
                     opened_at,
                     closed_at,
                     created_at,

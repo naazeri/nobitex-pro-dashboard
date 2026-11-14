@@ -908,7 +908,7 @@
       </div>
 
       <!-- Margin KPI Cards -->
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         <!-- 1. Realized Margin PnL (USDT & IRT) -->
         <div class="bg-slate-900/90 border rounded-xl p-4 shadow-sm" :class="positionsSummary.total_realized_pnl_usdt >= 0 ? 'border-emerald-900/40 bg-emerald-950/10' : 'border-rose-900/40 bg-rose-950/10'">
           <div class="text-[11px] text-slate-400 uppercase tracking-wide font-medium mb-1">
@@ -922,7 +922,24 @@
           </div>
         </div>
 
-        <!-- 2. Win Rate -->
+        <!-- 2. Total Margin Fees Paid (USDT & IRT) -->
+        <div class="bg-slate-900/90 border border-slate-800 rounded-xl p-4 shadow-sm">
+          <div class="text-[11px] text-slate-400 uppercase tracking-wide font-medium flex items-center justify-between mb-1">
+            <span>{{ t('kpiTotalFees') }}</span>
+            <span class="text-amber-500 font-mono">⚡</span>
+          </div>
+          <div class="text-2xl font-bold font-mono text-slate-200 tracking-tight">
+            <span class="bidi-num">${{ formatCurrency(positionsSummary.total_fees_usdt) }}</span>
+          </div>
+          <div class="text-xs font-mono mt-1 text-slate-400 font-semibold" v-if="positionsSummary.total_fees_irt">
+            <span class="bidi-num">{{ formatToman(positionsSummary.total_fees_irt) }} {{ currentLang === 'fa' ? 'تومان' : 'IRT' }}</span>
+          </div>
+          <div class="text-[10px] text-slate-500 mt-1 truncate" :title="t('kpiMarginFeesSub')">
+            {{ t('kpiMarginFeesSub') }}
+          </div>
+        </div>
+
+        <!-- 3. Win Rate -->
         <div class="bg-slate-900/90 border border-slate-800 rounded-xl p-4 shadow-sm">
           <div class="text-[11px] text-slate-400 uppercase tracking-wide font-medium mb-1">
             {{ t('kpiWinRate') }}
@@ -935,7 +952,7 @@
           </div>
         </div>
 
-        <!-- 3. Open Positions Count -->
+        <!-- 4. Open Positions Count -->
         <div class="bg-slate-900/90 border border-slate-800 rounded-xl p-4 shadow-sm">
           <div class="text-[11px] text-slate-400 uppercase tracking-wide font-medium mb-1">
             {{ t('kpiOpenPositions') }}
@@ -948,7 +965,7 @@
           </div>
         </div>
 
-        <!-- 4. Best Margin Trade -->
+        <!-- 5. Best Margin Trade -->
         <div class="bg-slate-900/90 border border-slate-800 rounded-xl p-4 shadow-sm">
           <div class="text-[11px] text-slate-400 uppercase tracking-wide font-medium flex items-center justify-between mb-1">
             <span>{{ t('kpiBestMarginTrade') }}</span>
@@ -1310,6 +1327,18 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
+                <th @click="toggleActivePositionsSort('total_fee')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
+                  <div class="flex items-center gap-1.5">
+                    <span>{{ t('colPosFee') }}</span>
+                    <span v-if="getSortInfo(activePositionsSort, 'total_fee')" class="inline-flex items-center text-amber-400 font-bold font-mono">
+                      <span>{{ getSortInfo(activePositionsSort, 'total_fee').dir === 'asc' ? '▲' : '▼' }}</span>
+                      <span v-if="getSortInfo(activePositionsSort, 'total_fee').isMulti" class="text-[10px] ml-0.5 bg-amber-500/20 px-1 py-0.2 rounded-full border border-amber-500/30">
+                        {{ getSortInfo(activePositionsSort, 'total_fee').priority }}
+                      </span>
+                    </span>
+                    <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
+                  </div>
+                </th>
                 <th @click="toggleActivePositionsSort('opened_at')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colPosOpened') }}</span>
@@ -1327,7 +1356,7 @@
             </thead>
             <tbody class="divide-y divide-slate-800/60 font-mono text-xs sm:text-sm">
               <tr v-if="filteredActivePositions.length === 0">
-                <td colspan="12" class="py-8 text-center text-slate-500">{{ t('noActivePositions') }}</td>
+                <td colspan="13" class="py-8 text-center text-slate-500">{{ t('noActivePositions') }}</td>
               </tr>
               <tr v-for="p in filteredActivePositions" :key="p.id" class="hover:bg-slate-800/40 transition">
                 <td class="py-3 px-4 text-slate-400">{{ p.id }}</td>
@@ -1383,6 +1412,14 @@
                 <td class="py-3 px-4 text-slate-300 whitespace-nowrap">{{ formatPositionCollateral(p.collateral, p.src_currency, p.dst_currency) }}</td>
                 <td class="py-3 px-4 font-bold whitespace-nowrap" :class="p.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'">
                   <span class="bidi-num">{{ formatPositionPnl(p.pnl, p.dst_currency) }}</span>
+                </td>
+                <td class="py-3 px-4 whitespace-nowrap">
+                  <div class="flex flex-col">
+                    <span class="font-bold text-slate-200 bidi-num">{{ formatPositionFee(p.total_fee, p.dst_currency) }}</span>
+                    <span class="text-[10px] text-slate-500 font-sans" :title="t('feeTooltipActive')">
+                      {{ t('feeOpenShort') }}: {{ formatPositionFee(p.open_fee, p.dst_currency) }} | {{ t('feeExtShort') }}: {{ formatPositionFee(p.extension_fee, p.dst_currency) }}
+                    </span>
+                  </div>
                 </td>
                 <td class="py-3 px-4 text-slate-400 text-xs whitespace-nowrap">{{ formatTimestamp(p.opened_at) }}</td>
                 <td class="py-3 px-4 text-center">
@@ -1521,6 +1558,18 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
+                <th @click="togglePastPositionsSort('total_fee')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
+                  <div class="flex items-center gap-1.5">
+                    <span>{{ t('colPosFee') }}</span>
+                    <span v-if="getSortInfo(pastPositionsSort, 'total_fee')" class="inline-flex items-center text-amber-400 font-bold font-mono">
+                      <span>{{ getSortInfo(pastPositionsSort, 'total_fee').dir === 'asc' ? '▲' : '▼' }}</span>
+                      <span v-if="getSortInfo(pastPositionsSort, 'total_fee').isMulti" class="text-[10px] ml-0.5 bg-amber-500/20 px-1 py-0.2 rounded-full border border-amber-500/30">
+                        {{ getSortInfo(pastPositionsSort, 'total_fee').priority }}
+                      </span>
+                    </span>
+                    <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
+                  </div>
+                </th>
                 <th @click="togglePastPositionsSort('opened_at')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colPosOpened') }}</span>
@@ -1562,7 +1611,7 @@
             </thead>
             <tbody class="divide-y divide-slate-800/60 font-mono text-xs sm:text-sm">
               <tr v-if="filteredPastPositions.length === 0">
-                <td colspan="12" class="py-8 text-center text-slate-500">{{ t('noClosedPositions') }}</td>
+                <td colspan="13" class="py-8 text-center text-slate-500">{{ t('noClosedPositions') }}</td>
               </tr>
               <tr v-for="p in filteredPastPositions" :key="p.id" class="hover:bg-slate-800/40 transition">
                 <td class="py-3 px-4 text-slate-400">{{ p.id }}</td>
@@ -1593,6 +1642,14 @@
                   <span :class="p.pnl_percent >= 0 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border-rose-500/20'" class="px-2 py-0.5 rounded text-xs border whitespace-nowrap inline-block">
                     <span class="bidi-num">{{ formatSignedPercent(p.pnl_percent, 1) }}</span>
                   </span>
+                </td>
+                <td class="py-3 px-4 whitespace-nowrap">
+                  <div class="flex flex-col">
+                    <span class="font-bold text-slate-200 bidi-num">{{ formatPositionFee(p.total_fee, p.dst_currency) }}</span>
+                    <span class="text-[10px] text-slate-500 font-sans" :title="t('feeTooltipClosed')">
+                      {{ t('feeOpenShort') }}: {{ formatPositionFee(p.open_fee, p.dst_currency) }} | {{ t('feeCloseShort') }}: {{ formatPositionFee(p.close_fee, p.dst_currency) }} | {{ t('feeExtShort') }}: {{ formatPositionFee(p.extension_fee, p.dst_currency) }}
+                    </span>
+                  </div>
                 </td>
                 <td class="py-3 px-4 text-slate-400 text-xs whitespace-nowrap">{{ formatTimestamp(p.opened_at) }}</td>
                 <td class="py-3 px-4 text-slate-400 text-xs whitespace-nowrap">{{ formatTimestamp(p.closed_at) }}</td>
@@ -4780,6 +4837,18 @@
           return formatAmount(num);
         }
 
+        function formatPositionFee(val, dstCurrency) {
+          const num = parseFloat(val);
+          if (isNaN(num) || num === 0) return '0';
+          const dst = (dstCurrency || '').toUpperCase();
+          if (dst === 'RLS' || dst === 'IRR' || dst === 'IRT') {
+            const toman = dst === 'IRT' ? Math.round(num) : Math.round(num / 10);
+            return toman.toLocaleString('en-US') + ' ' + (currentLang.value === 'fa' ? 'تومان' : 'IRT');
+          }
+          const dec = num >= 1 ? 2 : (num >= 0.01 ? 3 : 4);
+          return '$' + num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: dec });
+        }
+
         function formatTradePrice(price, market) {
           const num = parseFloat(price);
           if (isNaN(num)) return price;
@@ -6344,6 +6413,7 @@
           formatPositionPrice,
           formatPositionPnl,
           formatPositionCollateral,
+          formatPositionFee,
           formatTradePrice,
           formatTradeTotal,
           formatTradeFee,

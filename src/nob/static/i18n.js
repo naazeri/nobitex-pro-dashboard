@@ -145,6 +145,8 @@ export const TRANSLATIONS = {
     kpiOpenPositionsSub: "Active leveraged commitments",
     kpiBestMarginTrade: "Best Futures Trade",
     kpiBestMarginTradeSub: "Highest profit leveraged trade",
+    kpiMarginFees: "Total Fees Paid",
+    kpiMarginFeesSub: "Open + Close + Auto-renewal fees",
 
     // Positions Tables
     secOpenPositions: "Open Positions",
@@ -158,6 +160,12 @@ export const TRANSLATIONS = {
     colPosMark: "Mark Price",
     colPosLiq: "Liquidation Price",
     colPosCollateral: "Collateral",
+    colPosFee: "Total Fee",
+    feeOpenShort: "Open",
+    feeCloseShort: "Close",
+    feeExtShort: "Renew",
+    feeTooltipActive: "Opening fee + Auto-renewal fee",
+    feeTooltipClosed: "Opening fee + Closing fee + Auto-renewal fee",
     colPosPnl: "Net PnL",
     colPosRoi: "ROI %",
     colPosOpened: "Opened At",
@@ -530,6 +538,8 @@ export const TRANSLATIONS = {
     kpiOpenPositionsSub: "تعهدات فعال در حال حاضر",
     kpiBestMarginTrade: "بهترین معامله تعهدی",
     kpiBestMarginTradeSub: "بیشترین سود کسب‌شده در یک موقعیت",
+    kpiMarginFees: "مجموع کارمزد پرداختی",
+    kpiMarginFeesSub: "کارمزد باز کردن + بستن + تمدید خودکار",
 
     // Positions Tables
     secOpenPositions: "موقعیت‌های باز",
@@ -543,6 +553,12 @@ export const TRANSLATIONS = {
     colPosMark: "قیمت لحظه‌ای",
     colPosLiq: "قیمت لیکویید",
     colPosCollateral: "ودیعه",
+    colPosFee: "کارمزد کل",
+    feeOpenShort: "باز",
+    feeCloseShort: "بست",
+    feeExtShort: "تمدید",
+    feeTooltipActive: "کارمزد باز کردن + تمدید خودکار",
+    feeTooltipClosed: "کارمزد باز کردن + بستن + تمدید خودکار",
     colPosPnl: "سود/زیان خالص",
     colPosRoi: "بازدهی %",
     colPosOpened: "زمان ورود",

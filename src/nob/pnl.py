@@ -360,13 +360,34 @@ def calculate_portfolio(
 
 
 def calculate_positions_summary(
-    positions: List[Dict[str, Any]], market_stats: Optional[Dict[str, Any]] = None
+    positions: List[Dict[str, Any]],
+    market_stats: Optional[Dict[str, Any]] = None,
+    trades: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """
     Summarize leveraged positions (معاملات تعهدی) from Nobitex /positions/list.
+    Includes comprehensive fee accounting: opening fee, closing fee, and auto-renewal (extension) fee.
     """
     if market_stats is None:
         market_stats = {}
+
+    if trades is None:
+        try:
+            from nob.db import get_margin_trades
+            trades = get_margin_trades()
+        except Exception:
+            trades = []
+
+    # Build trade lookup maps for fast matching
+    trades_by_ts: Dict[str, Dict[str, Any]] = {}
+    trades_by_order: Dict[Any, List[Dict[str, Any]]] = {}
+    for t in (trades or []):
+        ts = t.get("timestamp")
+        if ts:
+            trades_by_ts[ts] = t
+        oid = t.get("order_id")
+        if oid is not None:
+            trades_by_order.setdefault(oid, []).append(t)
 
     active_positions: List[Dict[str, Any]] = []
     past_positions: List[Dict[str, Any]] = []
@@ -376,10 +397,99 @@ def calculate_positions_summary(
     wins = 0
     losses = 0
 
+    total_fees_usdt = 0.0
+    total_open_fees_usdt = 0.0
+    total_close_fees_usdt = 0.0
+    total_extension_fees_usdt = 0.0
+
+    total_fees_rls = 0.0
+    total_open_fees_rls = 0.0
+    total_close_fees_rls = 0.0
+    total_extension_fees_rls = 0.0
+
     for p in positions:
         status = str(p.get("status", "")).strip()
         dst = str(p.get("dst_currency", p.get("dstCurrency", ""))).lower()
         pnl = float(p.get("pnl", p.get("PNL", 0.0)) or 0.0)
+        collat = float(p.get("collateral", 0.0) or 0.0)
+        lev = float(p.get("leverage", 1.0) or 1.0)
+        entry_p = float(p.get("entry_price", 0.0) or 0.0)
+        exit_p = float(p.get("exit_price", 0.0) or 0.0)
+        rate = 0.00125 if dst == "rls" else 0.0008
+
+        # --- 1. Opening Fee ---
+        opened_at = p.get("opened_at")
+        open_fee = 0.0
+        if opened_at in trades_by_ts:
+            oid = trades_by_ts[opened_at].get("order_id")
+            fills = trades_by_order.get(oid, [trades_by_ts[opened_at]])
+            for fill in fills:
+                f_price = float(fill.get("price", 0.0) or 0.0)
+                f_fee = float(fill.get("fee", 0.0) or 0.0)
+                if fill.get("type") == "buy":
+                    open_fee += f_fee * f_price
+                else:
+                    open_fee += f_fee
+        else:
+            open_fee = collat * lev * rate
+
+        # --- 2. Closing Fee ---
+        closed_at = p.get("closed_at")
+        close_fee = 0.0
+        if status == "Open" or not closed_at:
+            close_fee = 0.0
+        elif closed_at in trades_by_ts:
+            oid = trades_by_ts[closed_at].get("order_id")
+            fills = trades_by_order.get(oid, [trades_by_ts[closed_at]])
+            for fill in fills:
+                f_price = float(fill.get("price", 0.0) or 0.0)
+                f_fee = float(fill.get("fee", 0.0) or 0.0)
+                if fill.get("type") == "buy":
+                    close_fee += f_fee * f_price
+                else:
+                    close_fee += f_fee
+        else:
+            val_exit = (
+                collat * lev * (exit_p / entry_p)
+                if (entry_p > 0 and exit_p > 0)
+                else (collat * lev)
+            )
+            close_fee = val_exit * rate
+
+        # --- 3. Extension / Auto-Renewal Fee ---
+        ext_fee = float(p.get("extension_fee") or p.get("extensionFee") or 0.0)
+        if ext_fee <= 0.0 and closed_at and opened_at:
+            try:
+                t_o = datetime.datetime.fromisoformat(opened_at)
+                t_c = datetime.datetime.fromisoformat(closed_at)
+                dur_hours = (t_c - t_o).total_seconds() / 3600.0
+                periods = int(dur_hours // 8)
+                liability = collat * max(0.0, lev - 1.0)
+                ext_fee = periods * 0.00033333 * liability
+            except Exception:
+                ext_fee = 0.0
+
+        # Round individual position fee figures
+        if dst == "usdt":
+            p["open_fee"] = round(open_fee, 4)
+            p["close_fee"] = round(close_fee, 4)
+            p["extension_fee"] = round(ext_fee, 4)
+            p["total_fee"] = round(open_fee + close_fee + ext_fee, 4)
+
+            total_fees_usdt += p["total_fee"]
+            total_open_fees_usdt += p["open_fee"]
+            total_close_fees_usdt += p["close_fee"]
+            total_extension_fees_usdt += p["extension_fee"]
+        else:
+            p["open_fee"] = round(open_fee)
+            p["close_fee"] = round(close_fee)
+            p["extension_fee"] = round(ext_fee)
+            p["total_fee"] = round(open_fee + close_fee + ext_fee)
+
+            total_fees_rls += p["total_fee"]
+            total_open_fees_rls += p["open_fee"]
+            total_close_fees_rls += p["close_fee"]
+            total_extension_fees_rls += p["extension_fee"]
 
         if status == "Open":
             # Calculate Liquidation Risk Metrics
@@ -450,6 +560,15 @@ def calculate_positions_summary(
             "total_realized_pnl_usdt": round(total_realized_pnl_usdt, 2),
             "total_realized_pnl_rls": round(total_realized_pnl_rls, 0),
             "total_realized_pnl_irt": round(total_realized_pnl_rls / 10.0),
+            "total_fees_usdt": round(total_fees_usdt, 2),
+            "total_open_fees_usdt": round(total_open_fees_usdt, 2),
+            "total_close_fees_usdt": round(total_close_fees_usdt, 2),
+            "total_extension_fees_usdt": round(total_extension_fees_usdt, 2),
+            "total_fees_rls": round(total_fees_rls),
+            "total_fees_irt": round(total_fees_rls / 10.0),
+            "total_open_fees_irt": round(total_open_fees_rls / 10.0),
+            "total_close_fees_irt": round(total_close_fees_rls / 10.0),
+            "total_extension_fees_irt": round(total_extension_fees_rls / 10.0),
             "active_count": len(active_positions),
             "past_count": total_past,
             "wins_count": wins,
