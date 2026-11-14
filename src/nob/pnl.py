@@ -776,11 +776,21 @@ def calculate_daily_pnl_calendar(
 
         spot_pnl = round(item["spot_pnl"], 2)
         fut_pnl = round(item["futures_pnl_usdt"], 2)
-        tot_pnl = round(spot_pnl + fut_pnl, 2)
+        fut_irt = round(item["futures_pnl_irt"])
+
+        # Convert IRT futures PnL to USDT using live Nobitex USDT-RLS rate if available
+        fut_irt_usdt = 0.0
+        if fut_irt != 0 and market_stats:
+            rls_rate = float(market_stats.get("usdt-rls", {}).get("latest", 0.0) or 0.0)
+            if rls_rate > 0:
+                toman_rate = rls_rate / 10.0
+                fut_irt_usdt = round(fut_irt / toman_rate, 2)
+
+        tot_pnl = round(spot_pnl + fut_pnl + fut_irt_usdt, 2)
 
         item["spot_pnl"] = spot_pnl
         item["futures_pnl_usdt"] = fut_pnl
-        item["futures_pnl_irt"] = round(item["futures_pnl_irt"])
+        item["futures_pnl_irt"] = fut_irt
         item["total_pnl"] = tot_pnl
         item["volume_usdt"] = round(item["volume_usdt"], 2)
         item["fees_usdt"] = round(item["fees_usdt"], 2)
@@ -789,10 +799,10 @@ def calculate_daily_pnl_calendar(
         item["trades_count"] = total_actions
         total_trades_count += total_actions
 
-        if tot_pnl > 0.005:
+        if tot_pnl > 0.005 or fut_irt > 10:
             item["status"] = "profit"
             winning_days += 1
-        elif tot_pnl < -0.005:
+        elif tot_pnl < -0.005 or fut_irt < -10:
             item["status"] = "loss"
             losing_days += 1
         else:

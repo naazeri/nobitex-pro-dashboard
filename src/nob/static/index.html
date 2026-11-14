@@ -2262,7 +2262,7 @@
               class="min-h-[85px] sm:min-h-[96px] md:min-h-[105px] rounded-xl p-2 sm:p-2.5 border transition-all duration-150 flex flex-col justify-between cursor-pointer select-none relative group"
               :class="[
                 selectedDayKey === day.dateKey ? 'ring-2 ring-blue-500 border-blue-400 bg-slate-800 shadow-md shadow-blue-500/10' :
-                day.hasActivity ? (day.pnl >= 0.005 ? 'bg-emerald-950/25 border-emerald-500/30 hover:border-emerald-400/60 hover:bg-emerald-950/40' : (day.pnl <= -0.005 ? 'bg-rose-950/25 border-rose-500/30 hover:border-rose-400/60 hover:bg-rose-950/40' : 'bg-slate-900 border-slate-800 hover:border-slate-700')) :
+                day.hasActivity ? ((day.pnl >= 0.005 || (day.stats?.futures_pnl_irt || 0) > 10) ? 'bg-emerald-950/25 border-emerald-500/30 hover:border-emerald-400/60 hover:bg-emerald-950/40' : ((day.pnl <= -0.005 || (day.stats?.futures_pnl_irt || 0) < -10) ? 'bg-rose-950/25 border-rose-500/30 hover:border-rose-400/60 hover:bg-rose-950/40' : 'bg-slate-900 border-slate-800 hover:border-slate-700')) :
                 'bg-slate-950/40 border-slate-800/60 hover:border-slate-700 hover:bg-slate-800/40'
               ]">
               
@@ -2284,8 +2284,13 @@
                 <template v-if="day.hasActivity">
                   <div 
                     class="text-xs sm:text-sm font-black font-mono tracking-tight"
-                    :class="day.pnl >= 0.005 ? 'text-emerald-400' : (day.pnl <= -0.005 ? 'text-rose-400' : 'text-slate-300')">
-                    <span class="bidi-num">{{ formatSignedCurrency(day.pnl, 2) }}</span>
+                    :class="(day.pnl >= 0.005 || (day.stats?.futures_pnl_irt || 0) > 10) ? 'text-emerald-400' : ((day.pnl <= -0.005 || (day.stats?.futures_pnl_irt || 0) < -10) ? 'text-rose-400' : 'text-slate-300')">
+                    <span v-if="day.pnl !== 0" class="bidi-num">{{ formatSignedCurrency(day.pnl, 2) }}</span>
+                    <span v-else-if="day.stats?.futures_pnl_irt" class="bidi-num">{{ (day.stats.futures_pnl_irt >= 0 ? '+' : '-') + formatToman(Math.abs(day.stats.futures_pnl_irt)) + ' ' + (currentLang === 'fa' ? 'ت' : 'T') }}</span>
+                    <span v-else class="bidi-num">{{ formatSignedCurrency(0, 2) }}</span>
+                  </div>
+                  <div v-if="day.stats?.futures_pnl_irt && day.pnl !== 0" class="text-[9px] font-mono text-slate-400 font-normal">
+                    <span>{{ (day.stats.futures_pnl_irt >= 0 ? '+' : '-') + formatToman(Math.abs(day.stats.futures_pnl_irt)) + ' ' + (currentLang === 'fa' ? 'ت' : 'T') }}</span>
                   </div>
                 </template>
                 <template v-else>
@@ -5148,7 +5153,7 @@
                 dateKey: dateKey,
                 secLabel: `${g.gd}/${g.gm}`,
                 isToday: dateKey === todayKey,
-                hasActivity: Boolean(stats && (count > 0 || Math.abs(pnl) > 0.005)),
+                hasActivity: Boolean(stats && (count > 0 || Math.abs(pnl) > 0.005 || Math.abs(stats.futures_pnl_irt || 0) > 10)),
                 pnl: pnl,
                 count: count,
                 stats: stats
@@ -5192,7 +5197,7 @@
                 dateKey: dateKey,
                 secLabel: j ? `${j.jd}/${j.jm}` : '',
                 isToday: dateKey === todayKey,
-                hasActivity: Boolean(stats && (count > 0 || Math.abs(pnl) > 0.005)),
+                hasActivity: Boolean(stats && (count > 0 || Math.abs(pnl) > 0.005 || Math.abs(stats.futures_pnl_irt || 0) > 10)),
                 pnl: pnl,
                 count: count,
                 stats: stats
