@@ -194,8 +194,9 @@ def api_get_pnl_calendar(since: Optional[str] = "all"):
     """
     since_date = None if since == "all" else since
     trades = get_all_crypto_trades_chronological(since_date=None)
-    positions = get_positions(status="past")
+    raw_positions = get_positions(status="past")
     prices = get_market_prices()
+    positions = calculate_positions_summary(raw_positions, prices).get("past", [])
     return calculate_daily_pnl_calendar(trades, positions, prices, since_date=since_date)
 
 
@@ -246,9 +247,10 @@ def api_get_equity_curve(
         btc_cache = get_btc_daily_history()
 
     trades = get_all_crypto_trades_chronological(since_date=None)
-    positions = get_positions(status="past")
+    raw_positions = get_positions(status="past")
     wallets = get_wallet_snapshots()
     prices = get_market_prices()
+    positions = calculate_positions_summary(raw_positions, prices).get("past", [])
 
     return calculate_equity_curve(
         trades=trades,

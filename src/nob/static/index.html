@@ -1410,8 +1410,12 @@
                 </td>
 
                 <td class="py-3 px-4 text-slate-300 whitespace-nowrap">{{ formatPositionCollateral(p.collateral, p.src_currency, p.dst_currency) }}</td>
-                <td class="py-3 px-4 font-bold whitespace-nowrap" :class="p.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'">
+                <td class="py-3 px-4 font-bold whitespace-nowrap" :class="p.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'"
+                    :title="p.gross_pnl !== undefined ? (t('grossPnlShort') + ': ' + formatPositionPnl(p.gross_pnl, p.dst_currency) + ' | ' + t('colPosFee') + ': -' + formatPositionFee(p.total_fee, p.dst_currency) + (p.pool_pnl_share ? ' | ' + t('poolShareShort') + ': -' + formatPositionFee(p.pool_pnl_share, p.dst_currency) : '')) : ''">
                   <span class="bidi-num">{{ formatPositionPnl(p.pnl, p.dst_currency) }}</span>
+                  <div v-if="p.gross_pnl !== undefined && Math.abs(p.gross_pnl - p.pnl) > 0.001" class="text-[10px] text-slate-500 font-sans font-normal">
+                    <span>{{ t('grossPnlShort') }}: {{ formatPositionPnl(p.gross_pnl, p.dst_currency) }}</span>
+                  </div>
                 </td>
                 <td class="py-3 px-4 whitespace-nowrap">
                   <div class="flex flex-col">
@@ -1635,8 +1639,12 @@
                 <td class="py-3 px-4 font-bold text-amber-400 whitespace-nowrap">x{{ p.leverage }}</td>
                 <td class="py-3 px-4 text-slate-200 whitespace-nowrap">{{ formatPositionPrice(p.entry_price, p.dst_currency) }}</td>
                 <td class="py-3 px-4 text-slate-200 font-bold whitespace-nowrap">{{ formatPositionPrice(p.exit_price, p.dst_currency) }}</td>
-                <td class="py-3 px-4 font-bold whitespace-nowrap" :class="p.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'">
+                <td class="py-3 px-4 font-bold whitespace-nowrap" :class="p.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'"
+                    :title="p.gross_pnl !== undefined ? (t('grossPnlShort') + ': ' + formatPositionPnl(p.gross_pnl, p.dst_currency) + ' | ' + t('colPosFee') + ': -' + formatPositionFee(p.total_fee, p.dst_currency) + (p.pool_pnl_share ? ' | ' + t('poolShareShort') + ': -' + formatPositionFee(p.pool_pnl_share, p.dst_currency) : '')) : ''">
                   <span class="bidi-num">{{ formatPositionPnl(p.pnl, p.dst_currency) }}</span>
+                  <div v-if="p.gross_pnl !== undefined && Math.abs(p.gross_pnl - p.pnl) > 0.001" class="text-[10px] text-slate-500 font-sans font-normal">
+                    <span>{{ t('grossPnlShort') }}: {{ formatPositionPnl(p.gross_pnl, p.dst_currency) }}</span>
+                  </div>
                 </td>
                 <td class="py-3 px-4 font-semibold whitespace-nowrap">
                   <span :class="p.pnl_percent >= 0 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border-rose-500/20'" class="px-2 py-0.5 rounded text-xs border whitespace-nowrap inline-block">
@@ -2456,10 +2464,11 @@
                       </span>
                     </td>
                     <td class="py-2 px-3 font-mono font-bold text-amber-400 whitespace-nowrap"><span class="bidi-num">{{ pos.leverage }}x</span></td>
-                    <td class="py-2 px-3 font-mono text-slate-300 whitespace-nowrap"><span class="bidi-num">${{ formatCurrency(pos.entry_price, 2) }}</span></td>
-                    <td class="py-2 px-3 font-mono text-slate-200 whitespace-nowrap"><span class="bidi-num">${{ formatCurrency(pos.exit_price, 2) }}</span></td>
-                    <td class="py-2 px-3 font-mono font-bold whitespace-nowrap" :class="pos.pnl_usdt >= 0 ? 'text-emerald-400' : 'text-rose-400'">
-                      <span class="bidi-num">{{ formatSignedCurrency(pos.pnl_usdt, 2) }}</span>
+                    <td class="py-2 px-3 font-mono text-slate-300 whitespace-nowrap"><span class="bidi-num">{{ formatPositionPrice(pos.entry_price, pos.dst_currency) }}</span></td>
+                    <td class="py-2 px-3 font-mono text-slate-200 whitespace-nowrap"><span class="bidi-num">{{ formatPositionPrice(pos.exit_price, pos.dst_currency) }}</span></td>
+                    <td class="py-2 px-3 font-mono font-bold whitespace-nowrap" :class="(pos.dst_currency === 'USDT' ? pos.pnl_usdt : pos.pnl_irt) >= 0 ? 'text-emerald-400' : 'text-rose-400'">
+                      <span class="bidi-num" v-if="pos.dst_currency === 'USDT'">{{ formatSignedCurrency(pos.pnl_usdt, 2) }}</span>
+                      <span class="bidi-num" v-else>{{ (pos.pnl_irt >= 0 ? '+' : '-') + formatToman(Math.abs(pos.pnl_irt)) + ' ' + (currentLang === 'fa' ? 'تومان' : 'IRT') }}</span>
                       <span class="text-[10px] opacity-75 ml-1 bidi-num">({{ formatSignedPercent(pos.pnl_percent, 1) }})</span>
                     </td>
                     <td class="py-2 px-3 text-slate-400 font-mono text-[11px] whitespace-nowrap">{{ formatTimestamp(pos.closed_at).split(' ')[1] || pos.closed_at }}</td>

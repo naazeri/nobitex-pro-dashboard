@@ -113,10 +113,13 @@ def calculate_portfolio(
                 total_bought_qty += amount
                 total_bought_cost += total
 
-                # Update Weighted Average Cost (WAC)
-                if current_qty + amount > 0:
-                    avg_cost = ((current_qty * avg_cost) + total) / (current_qty + amount)
-                current_qty += amount
+                # Net crypto received in wallet after Nobitex fee deduction
+                net_amount = max(0.0, amount - fee_raw)
+
+                # Update Weighted Average Cost (WAC) including acquisition fee
+                if current_qty + net_amount > 0:
+                    avg_cost = ((current_qty * avg_cost) + total) / (current_qty + net_amount)
+                current_qty += net_amount
 
             elif trade_type == "sell":
                 # Sell fee is charged in USDT!
@@ -491,6 +494,33 @@ def calculate_positions_summary(
             total_close_fees_rls += p["close_fee"]
             total_extension_fees_rls += p["extension_fee"]
 
+        # Calculate TRUE NET PnL after deducting all fees and profit-share
+        gross_pnl = float(p.get("pnl", 0.0) or p.get("PNL", 0.0) or 0.0)
+        pool_share = float(p.get("pool_pnl_share", 0.0) or p.get("poolPNLShare", 0.0) or 0.0)
+        total_fee = float(p["total_fee"])
+
+        if status == "Open":
+            net_pnl = gross_pnl - total_fee
+        else:
+            net_pnl = gross_pnl - pool_share - total_fee
+
+        net_pnl_percent = (net_pnl / collat * 100.0) if collat > 0 else 0.0
+
+        if dst == "usdt":
+            p["gross_pnl"] = round(gross_pnl, 4)
+            p["pool_pnl_share"] = round(pool_share, 4)
+            p["net_pnl"] = round(net_pnl, 4)
+            p["pnl"] = round(net_pnl, 4)
+        else:
+            p["gross_pnl"] = round(gross_pnl)
+            p["pool_pnl_share"] = round(pool_share)
+            p["net_pnl"] = round(net_pnl)
+            p["pnl"] = round(net_pnl)
+
+        p["gross_pnl_percent"] = float(p.get("pnl_percent", 0.0) or 0.0)
+        p["net_pnl_percent"] = round(net_pnl_percent, 2)
+        p["pnl_percent"] = round(net_pnl_percent, 2)
+
         if status == "Open":
             # Calculate Liquidation Risk Metrics
             mark_p = float(p.get("mark_price", 0.0) or 0.0)
@@ -519,13 +549,13 @@ def calculate_positions_summary(
         else:
             past_positions.append(p)
             if dst == "usdt":
-                total_realized_pnl_usdt += pnl
+                total_realized_pnl_usdt += p["pnl"]
             elif dst == "rls":
-                total_realized_pnl_rls += pnl
+                total_realized_pnl_rls += p["pnl"]
 
-            if pnl > 0.001:
+            if p["pnl"] > 0.001:
                 wins += 1
-            elif pnl < -0.001:
+            elif p["pnl"] < -0.001:
                 losses += 1
 
     total_past = len(past_positions)
@@ -536,12 +566,12 @@ def calculate_positions_summary(
         if str(p.get("dst_currency", p.get("dstCurrency", ""))).lower() == "usdt"
     ]
     best_position = (
-        max(usdt_past, key=lambda x: float(x.get("pnl", x.get("PNL", 0.0)) or 0.0))
+        max(usdt_past, key=lambda x: float(x.get("pnl", 0.0) or 0.0))
         if usdt_past
         else None
     )
     worst_position = (
-        min(usdt_past, key=lambda x: float(x.get("pnl", x.get("PNL", 0.0)) or 0.0))
+        min(usdt_past, key=lambda x: float(x.get("pnl", 0.0) or 0.0))
         if usdt_past
         else None
     )
@@ -636,9 +666,10 @@ def calculate_daily_pnl_calendar(
 
             if ttype == "buy":
                 fee_usdt = fee_raw * price
-                if current_qty + amount > 0:
-                    avg_cost = ((current_qty * avg_cost) + total) / (current_qty + amount)
-                current_qty += amount
+                net_amount = max(0.0, amount - fee_raw)
+                if current_qty + net_amount > 0:
+                    avg_cost = ((current_qty * avg_cost) + total) / (current_qty + net_amount)
+                current_qty += net_amount
 
                 # Record buy volume and fee if within date range
                 if date_str and (not since_date or date_str >= since_date):
@@ -697,7 +728,7 @@ def calculate_daily_pnl_calendar(
         if since_date and date_str < since_date:
             continue
 
-        pnl = float(pos.get("pnl", pos.get("PNL", 0.0)) or 0.0)
+        pnl = float(pos.get("net_pnl", pos.get("pnl", pos.get("PNL", 0.0))) or 0.0)
         dst = str(pos.get("dst_currency", pos.get("dstCurrency", ""))).upper()
 
         pnl_usdt = pnl if dst == "USDT" else 0.0
@@ -724,6 +755,9 @@ def calculate_daily_pnl_calendar(
             "pnl": round(pnl, 2),
             "pnl_usdt": round(pnl_usdt, 2),
             "pnl_irt": round(pnl_irt),
+            "gross_pnl": float(pos.get("gross_pnl", 0.0)),
+            "pool_pnl_share": float(pos.get("pool_pnl_share", 0.0)),
+            "total_fee": float(pos.get("total_fee", 0.0)),
             "pnl_percent": float(pos.get("pnl_percent", 0.0) or 0.0),
             "closed_at": closed_at,
             "status": pos.get("status"),
