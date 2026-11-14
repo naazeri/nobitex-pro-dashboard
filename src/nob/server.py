@@ -3,7 +3,10 @@ import csv
 import webbrowser
 from pathlib import Path
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
+import zoneinfo
+
+TEHRAN_TZ = zoneinfo.ZoneInfo("Asia/Tehran")
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Response
@@ -488,15 +491,20 @@ def api_export_csv(
         row["price_usdt"] = row.get("price")
         row["total_usdt"] = row.get("total")
 
-        if lang == "fa" and jdatetime:
-            raw_ts = str(row.get("timestamp", ""))
-            try:
-                clean_ts = raw_ts.replace("Z", "+00:00")
-                dt = datetime.fromisoformat(clean_ts)
-                jdt = jdatetime.datetime.fromgregorian(datetime=dt)
+        raw_ts = str(row.get("timestamp", ""))
+        try:
+            clean_ts = raw_ts.replace("Z", "+00:00")
+            dt = datetime.fromisoformat(clean_ts)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            dt_tehran = dt.astimezone(TEHRAN_TZ)
+            if lang == "fa" and jdatetime:
+                jdt = jdatetime.datetime.fromgregorian(datetime=dt_tehran)
                 row["timestamp"] = jdt.strftime("%Y/%m/%d %H:%M:%S")
-            except Exception:
-                pass
+            else:
+                row["timestamp"] = dt_tehran.strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            pass
 
         writer.writerow(row)
 

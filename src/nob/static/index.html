@@ -3849,12 +3849,31 @@
         const calendarMode = ref('all'); // 'all', 'spot', 'futures'
         const selectedDayKey = ref('');
 
-        const now = new Date();
+        function getTehranNow() {
+          try {
+            const fmt = new Intl.DateTimeFormat('en-US', {
+              timeZone: 'Asia/Tehran',
+              year: 'numeric',
+              month: 'numeric',
+              day: 'numeric'
+            });
+            const parts = fmt.formatToParts(new Date());
+            const p = {};
+            for (const part of parts) p[part.type] = parseInt(part.value, 10);
+            return { gy: p.year, gm: p.month, gd: p.day };
+          } catch {
+            const tehranMs = Date.now() + (3 * 60 + 30) * 60 * 1000;
+            const dTehran = new Date(tehranMs);
+            return { gy: dTehran.getUTCFullYear(), gm: dTehran.getUTCMonth() + 1, gd: dTehran.getUTCDate() };
+          }
+        }
+
+        const nowTehran = getTehranNow();
         const calGregorian = reactive({
-          year: now.getFullYear(),
-          month: now.getMonth() + 1
+          year: nowTehran.gy,
+          month: nowTehran.gm
         });
-        const initialJ = window.jalaali ? window.jalaali.toJalaali(calGregorian.year, calGregorian.month, now.getDate()) : { jy: 1405, jm: 8, jd: now.getDate() };
+        const initialJ = window.jalaali ? window.jalaali.toJalaali(calGregorian.year, calGregorian.month, nowTehran.gd) : { jy: 1405, jm: 8, jd: nowTehran.gd };
         const calJalali = reactive({
           year: initialJ.jy,
           month: initialJ.jm
@@ -3942,15 +3961,15 @@
         }
 
         function goToday() {
-          const d = new Date();
-          calGregorian.year = d.getFullYear();
-          calGregorian.month = d.getMonth() + 1;
+          const tNow = getTehranNow();
+          calGregorian.year = tNow.gy;
+          calGregorian.month = tNow.gm;
           if (window.jalaali) {
-            const j = window.jalaali.toJalaali(d.getFullYear(), d.getMonth() + 1, d.getDate());
+            const j = window.jalaali.toJalaali(tNow.gy, tNow.gm, tNow.gd);
             calJalali.year = j.jy;
             calJalali.month = j.jm;
           }
-          const todayKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+          const todayKey = `${tNow.gy}-${String(tNow.gm).padStart(2, '0')}-${String(tNow.gd).padStart(2, '0')}`;
           selectedDayKey.value = todayKey;
         }
 
@@ -3983,8 +4002,8 @@
         const monthDays = computed(() => {
           const isFa = currentLang.value === 'fa' && window.jalaali;
           const pad = (n) => String(n).padStart(2, '0');
-          const dNow = new Date();
-          const todayKey = `${dNow.getFullYear()}-${pad(dNow.getMonth() + 1)}-${pad(dNow.getDate())}`;
+          const tNow = getTehranNow();
+          const todayKey = `${tNow.gy}-${pad(tNow.gm)}-${pad(tNow.gd)}`;
           const cells = [];
 
           if (isFa) {
