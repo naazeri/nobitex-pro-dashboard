@@ -76,6 +76,7 @@ def init_db(db_path: Optional[Path] = None):
                 amount REAL,
                 total_price REAL,
                 matched_amount REAL,
+                unmatched_amount REAL,
                 leverage REAL,
                 status TEXT,
                 created_at TEXT,
@@ -83,6 +84,10 @@ def init_db(db_path: Optional[Path] = None):
             );
         """)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_orders_trade_type ON orders(trade_type);")
+        try:
+            cursor.execute("ALTER TABLE orders ADD COLUMN unmatched_amount REAL DEFAULT 0;")
+        except sqlite3.OperationalError:
+            pass
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS metadata (
@@ -204,7 +209,10 @@ def upsert_orders(orders: List[Dict[str, Any]], db_path: Optional[Path] = None) 
             price = to_float(o.get("price"))
             amount = to_float(o.get("amount"))
             total_price = to_float(o.get("totalPrice") or o.get("totalOrderPrice"))
+            if total_price == 0.0 and price > 0 and amount > 0:
+                total_price = price * amount
             matched_amount = to_float(o.get("matchedAmount"))
+            unmatched_amount = to_float(o.get("unmatchedAmount"), max(0.0, amount - matched_amount))
             leverage = to_float(o.get("leverage"), 1.0)
             status = o.get("status", "")
             created_at = o.get("created_at")
@@ -213,8 +221,8 @@ def upsert_orders(orders: List[Dict[str, Any]], db_path: Optional[Path] = None) 
                 """
                 INSERT OR REPLACE INTO orders (
                     id, trade_type, market, type, execution, price,
-                    amount, total_price, matched_amount, leverage, status, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    amount, total_price, matched_amount, unmatched_amount, leverage, status, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     order_id,
@@ -226,6 +234,7 @@ def upsert_orders(orders: List[Dict[str, Any]], db_path: Optional[Path] = None) 
                     amount,
                     total_price,
                     matched_amount,
+                    unmatched_amount,
                     leverage,
                     status,
                     created_at,
@@ -235,6 +244,35 @@ def upsert_orders(orders: List[Dict[str, Any]], db_path: Optional[Path] = None) 
             count += 1
         conn.commit()
     return count
+
+
+def get_open_orders(trade_type: Optional[str] = None, db_path: Optional[Path] = None) -> List[Dict[str, Any]]:
+    """Retrieve active/open orders from database with optional trade_type filter ('Spot' | 'Margin')."""
+    init_db(db_path)
+    with get_db_connection(db_path) as conn:
+        cursor = conn.cursor()
+        query = "SELECT * FROM orders WHERE status = 'Active'"
+        params = []
+        if trade_type:
+            query += " AND trade_type = ?"
+            params.append(trade_type)
+        query += " ORDER BY created_at DESC"
+        cursor.execute(query, params)
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def update_order_status(order_id: int, status: str, db_path: Optional[Path] = None) -> bool:
+    """Update order status (e.g. to 'Canceled') in database."""
+    init_db(db_path)
+    with get_db_connection(db_path) as conn:
+        cursor = conn.cursor()
+        now_str = datetime.now().isoformat()
+        cursor.execute(
+            "UPDATE orders SET status = ?, updated_at = ? WHERE id = ?",
+            (status, now_str, order_id),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
 
 
 def upsert_trades(

@@ -46,6 +46,8 @@ from nob.db import (
     get_journal_tags_summary,
     get_chart_state,
     save_chart_state,
+    get_open_orders,
+    update_order_status,
 )
 from nob.nobitex_client import NobitexClient
 from nob.pnl import (
@@ -739,6 +741,178 @@ def api_get_chart_symbols():
 
     symbols_list.sort(key=sort_key)
     return symbols_list
+
+
+# ==========================================
+# OPEN ORDERS ENDPOINTS
+# ==========================================
+
+class CancelOrderRequest(BaseModel):
+    order_id: int
+
+
+_open_orders_cache = {
+    "timestamp": 0.0,
+    "data": None
+}
+
+
+@app.get("/api/orders/open")
+def api_get_open_orders(refresh: bool = False):
+    """
+    Fetch all active/open orders with Spot vs Margin separation,
+    enriched with current market price, distance to trigger %, and fill progress.
+    """
+    global _open_orders_cache
+    now = time.time()
+
+    # Use cached data if within 10 seconds unless refresh is requested
+    if not refresh and _open_orders_cache["data"] and (now - _open_orders_cache["timestamp"] < 10.0):
+        return _open_orders_cache["data"]
+
+    client = NobitexClient()
+    raw_orders = []
+    source = "live"
+    try:
+        raw_orders = client.fetch_all_orders(status="open", page_size=100)
+        if raw_orders:
+            upsert_orders(raw_orders)
+    except Exception as e:
+        print("Warning: Failed to fetch live open orders from Nobitex API:", e)
+        source = "db"
+        raw_orders = get_open_orders()
+
+    prices_map = get_market_prices()
+
+    enriched_orders = []
+    spot_count = 0
+    margin_count = 0
+    buy_count = 0
+    sell_count = 0
+    total_val_usdt = 0.0
+    total_val_rls = 0.0
+
+    for o in raw_orders:
+        oid = o.get("id")
+        trade_type = o.get("tradeType") or o.get("trade_type", "Spot")
+        mkt_raw = str(o.get("market", "")).upper()
+        parts = mkt_raw.replace("/", "-").split("-")
+        base = parts[0] if len(parts) > 0 else ""
+        quote = parts[1] if len(parts) > 1 else "USDT"
+
+        side = str(o.get("type", "")).lower()
+        execution = o.get("execution", "Limit")
+
+        def to_f(v, d=0.0):
+            if v is None:
+                return d
+            try:
+                return float(v)
+            except (ValueError, TypeError):
+                return d
+
+        price = to_f(o.get("price"))
+        amount = to_f(o.get("amount"))
+        matched = to_f(o.get("matchedAmount") or o.get("matched_amount"))
+        unmatched = to_f(o.get("unmatchedAmount") or o.get("unmatched_amount"), max(0.0, amount - matched))
+        tot_price = to_f(o.get("totalPrice") or o.get("totalOrderPrice") or o.get("total_price"))
+        if tot_price == 0.0 and price > 0 and amount > 0:
+            tot_price = price * amount
+
+        leverage = to_f(o.get("leverage"), 1.0)
+        status = o.get("status", "Active")
+        created_at = o.get("created_at")
+
+        # Current market price lookup
+        m_key = f"{base.lower()}-{quote.lower()}"
+        cur_price_obj = prices_map.get(m_key, {})
+        cur_price = cur_price_obj.get("latest") if isinstance(cur_price_obj, dict) else None
+
+        # Distance calculation
+        dist_pct = None
+        if cur_price and cur_price > 0 and price > 0:
+            dist_pct = round(((price - cur_price) / cur_price) * 100, 2)
+
+        fill_pct = 0.0
+        if amount > 0:
+            fill_pct = round((matched / amount) * 100, 1)
+
+        if trade_type == "Margin":
+            margin_count += 1
+        else:
+            spot_count += 1
+
+        if side == "buy":
+            buy_count += 1
+        elif side == "sell":
+            sell_count += 1
+
+        if quote == "USDT":
+            total_val_usdt += tot_price
+        elif quote in ("RLS", "IRT"):
+            total_val_rls += tot_price
+
+        enriched_orders.append({
+            "id": oid,
+            "market": mkt_raw,
+            "base": base,
+            "quote": quote,
+            "trade_type": trade_type,
+            "type": side,
+            "execution": execution,
+            "price": price,
+            "current_price": cur_price,
+            "distance_percent": dist_pct,
+            "amount": amount,
+            "matched_amount": matched,
+            "unmatched_amount": unmatched,
+            "fill_percent": fill_pct,
+            "total_price": tot_price,
+            "leverage": leverage,
+            "status": status,
+            "created_at": created_at,
+        })
+
+    # Sort orders by created_at descending (newest first)
+    enriched_orders.sort(key=lambda x: str(x.get("created_at", "")), reverse=True)
+
+    summary = {
+        "total_count": len(enriched_orders),
+        "spot_count": spot_count,
+        "margin_count": margin_count,
+        "buy_count": buy_count,
+        "sell_count": sell_count,
+        "total_value_usdt": round(total_val_usdt, 2),
+        "total_value_rls": round(total_val_rls, 0),
+    }
+
+    result = {
+        "orders": enriched_orders,
+        "summary": summary,
+        "source": source,
+        "updated_at": datetime.now().isoformat(),
+    }
+    _open_orders_cache = {"timestamp": now, "data": result}
+    return result
+
+
+@app.post("/api/orders/cancel")
+def api_cancel_order(req: CancelOrderRequest):
+    """
+    Cancel an open order on Nobitex and update local SQLite status.
+    """
+    global _open_orders_cache
+    if not req.order_id:
+        raise HTTPException(status_code=400, detail="order_id is required")
+
+    client = NobitexClient()
+    try:
+        res = client.cancel_order(req.order_id)
+        update_order_status(req.order_id, "Canceled")
+        _open_orders_cache = {"timestamp": 0.0, "data": None}
+        return {"status": "ok", "message": "سفارش با موفقیت لغو شد.", "result": res}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # Serve index.html

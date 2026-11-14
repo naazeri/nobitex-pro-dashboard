@@ -288,3 +288,28 @@ class NobitexClient:
             page += 1
             time.sleep(0.1)
         return all_orders
+
+    def cancel_order(self, order_id: int) -> Dict[str, Any]:
+        """
+        Cancel an open order via POST /market/orders/update-status.
+        """
+        full_path = "/market/orders/update-status"
+        body_dict = {"order": int(order_id), "status": "canceled"}
+        raw_body = json.dumps(body_dict, separators=(",", ":"))
+        sig, ts = sign_request(self.secret, "POST", full_path, raw_body)
+        headers = {
+            "Nobitex-Key": self.api_key,
+            "Nobitex-Signature": sig,
+            "Nobitex-Timestamp": ts,
+            "User-Agent": USER_AGENT,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        url = f"{self.base_url}{full_path}"
+        response = self.session.post(url, headers=headers, data=raw_body, timeout=15)
+        if response.status_code != 200:
+            raise RuntimeError(f"Cancel order failed (HTTP {response.status_code}): {response.text}")
+        data = response.json()
+        if data.get("status") != "ok":
+            raise RuntimeError(f"Cancel order failed: {data.get('message', 'Unknown error')}")
+        return data
