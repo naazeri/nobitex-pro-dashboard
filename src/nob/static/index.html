@@ -3822,7 +3822,7 @@
 
   <!-- Main Vue 3 Application -->
   <script type="module">
-    import { createApp, ref, reactive, computed, onMounted, nextTick } from '/static/vendor/vue.esm-browser.prod.js';
+    import { createApp, ref, reactive, computed, onMounted, nextTick, watch } from '/static/vendor/vue.esm-browser.prod.js';
     import { TRANSLATIONS, formatDate } from '/static/i18n.js';
 
     createApp({
@@ -5303,6 +5303,12 @@
           fetchChartSymbols();
           fetchOpenOrders();
 
+          if (activeTab.value === 'chart') {
+            nextTick(() => initOrResizeChart());
+          } else if (activeTab.value === 'spot') {
+            nextTick(() => renderCharts());
+          }
+
           // 1. Auto-trigger sync on page open (per user request)
           triggerSync();
 
@@ -6324,6 +6330,218 @@
             await selectChartSymbol(sym);
           });
         }
+
+        // ==========================================
+        // URL STATE SYNCHRONIZATION (TABS & FILTERS)
+        // ==========================================
+        let isSyncingUrl = false;
+
+        function applyUrlState() {
+          const params = new URLSearchParams(window.location.search);
+
+          // 1. Tab
+          const tab = params.get('tab');
+          if (['spot', 'margin', 'orders', 'chart', 'calendar', 'trades'].includes(tab)) {
+            activeTab.value = tab;
+          }
+
+          // 2. Chart states
+          const sym = params.get('symbol') || params.get('sym');
+          if (sym) {
+            chartSymbol.value = sym.toUpperCase();
+          }
+          const tf = params.get('tf') || params.get('timeframe');
+          if (tf && ['15m', '30m', '1h', '4h', '1D', '1W'].includes(tf)) {
+            chartTimeframe.value = tf;
+          }
+
+          // 3. Calendar states
+          const cm = params.get('calMode');
+          if (['all', 'spot', 'futures'].includes(cm)) {
+            calendarMode.value = cm;
+          }
+          const d = params.get('date');
+          if (d && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
+            selectedDayKey.value = d;
+            const [gy, gm, gd] = d.split('-').map(Number);
+            calGregorian.year = gy;
+            calGregorian.month = gm;
+            if (window.jalaali) {
+              const j = window.jalaali.toJalaali(gy, gm, gd);
+              calJalali.year = j.jy;
+              calJalali.month = j.jm;
+            }
+          }
+
+          // 4. Open Orders states
+          const ot = params.get('orderType') || params.get('ordersFilter');
+          if (['all', 'Spot', 'Margin'].includes(ot)) {
+            openOrdersFilter.value = ot;
+          }
+          const os = params.get('orderSide') || params.get('ordersSide');
+          if (['all', 'buy', 'sell'].includes(os)) {
+            openOrdersSideFilter.value = os;
+          }
+
+          // 5. Margin states
+          const ms = params.get('marginSide');
+          if (['buy', 'sell'].includes(ms)) {
+            marginFilter.side = ms;
+          }
+          const mm = params.get('marginMarket');
+          if (mm) {
+            marginFilter.market = mm;
+          }
+          const mo = params.get('marginOutcome');
+          if (['profit', 'loss', 'liquidated'].includes(mo)) {
+            marginFilter.outcome = mo;
+          }
+
+          // 6. Spot states
+          const ss = params.get('spotStatus');
+          if (['all', 'profit', 'loss', 'balance', 'dust'].includes(ss)) {
+            holdingsFilter.status = ss;
+          }
+
+          // 7. Trades states
+          const tm = params.get('tradeMarket');
+          if (tm) {
+            filters.market = tm;
+          }
+          const tt = params.get('tradeType');
+          if (['buy', 'sell'].includes(tt)) {
+            filters.type = tt;
+          }
+
+          // 8. Search query (applied to the active tab)
+          const q = params.get('q');
+          if (q !== null && q !== undefined) {
+            if (activeTab.value === 'spot') holdingsFilter.search = q;
+            else if (activeTab.value === 'margin') marginFilter.search = q;
+            else if (activeTab.value === 'orders') openOrdersSearch.value = q;
+            else if (activeTab.value === 'trades') filters.search = q;
+          }
+        }
+
+        function pushUrlState() {
+          if (isSyncingUrl) return;
+          const params = new URLSearchParams();
+
+          if (activeTab.value !== 'spot') {
+            params.set('tab', activeTab.value);
+          }
+
+          if (activeTab.value === 'chart') {
+            if (chartSymbol.value && chartSymbol.value !== 'BTCUSDT') {
+              params.set('symbol', chartSymbol.value);
+            }
+            if (chartTimeframe.value && chartTimeframe.value !== '1D') {
+              params.set('tf', chartTimeframe.value);
+            }
+          } else if (activeTab.value === 'calendar') {
+            if (calendarMode.value !== 'all') {
+              params.set('calMode', calendarMode.value);
+            }
+            if (selectedDayKey.value) {
+              params.set('date', selectedDayKey.value);
+            }
+          } else if (activeTab.value === 'orders') {
+            if (openOrdersFilter.value !== 'all') {
+              params.set('orderType', openOrdersFilter.value);
+            }
+            if (openOrdersSideFilter.value !== 'all') {
+              params.set('orderSide', openOrdersSideFilter.value);
+            }
+            if (openOrdersSearch.value && openOrdersSearch.value.trim()) {
+              params.set('q', openOrdersSearch.value.trim());
+            }
+          } else if (activeTab.value === 'margin') {
+            if (marginFilter.side) {
+              params.set('marginSide', marginFilter.side);
+            }
+            if (marginFilter.market) {
+              params.set('marginMarket', marginFilter.market);
+            }
+            if (marginFilter.outcome) {
+              params.set('marginOutcome', marginFilter.outcome);
+            }
+            if (marginFilter.search && marginFilter.search.trim()) {
+              params.set('q', marginFilter.search.trim());
+            }
+          } else if (activeTab.value === 'spot') {
+            if (holdingsFilter.status !== 'all') {
+              params.set('spotStatus', holdingsFilter.status);
+            }
+            if (holdingsFilter.search && holdingsFilter.search.trim()) {
+              params.set('q', holdingsFilter.search.trim());
+            }
+          } else if (activeTab.value === 'trades') {
+            if (filters.market) {
+              params.set('tradeMarket', filters.market);
+            }
+            if (filters.type) {
+              params.set('tradeType', filters.type);
+            }
+            if (filters.search && filters.search.trim()) {
+              params.set('q', filters.search.trim());
+            }
+          }
+
+          const qStr = params.toString();
+          const targetUrl = qStr ? `${window.location.pathname}?${qStr}` : window.location.pathname;
+          const currentUrl = `${window.location.pathname}${window.location.search}`;
+
+          if (targetUrl !== currentUrl) {
+            window.history.replaceState(null, '', targetUrl);
+          }
+        }
+
+        // Apply URL state immediately on setup
+        applyUrlState();
+
+        // Watch reactive states and update URL
+        watch(
+          [
+            activeTab,
+            chartSymbol,
+            chartTimeframe,
+            calendarMode,
+            selectedDayKey,
+            openOrdersFilter,
+            openOrdersSideFilter,
+            () => openOrdersSearch.value,
+            () => marginFilter.side,
+            () => marginFilter.market,
+            () => marginFilter.outcome,
+            () => marginFilter.search,
+            () => holdingsFilter.status,
+            () => holdingsFilter.search,
+            () => filters.market,
+            () => filters.type,
+            () => filters.search,
+          ],
+          () => {
+            pushUrlState();
+          },
+          { flush: 'post' }
+        );
+
+        // Handle Browser Forward / Back Navigation
+        window.addEventListener('popstate', () => {
+          isSyncingUrl = true;
+          try {
+            applyUrlState();
+            if (activeTab.value === 'chart') {
+              nextTick(() => initOrResizeChart());
+            } else if (activeTab.value === 'spot') {
+              nextTick(() => renderCharts());
+            }
+          } finally {
+            nextTick(() => {
+              isSyncingUrl = false;
+            });
+          }
+        });
 
         return {
           // Open Orders exports
