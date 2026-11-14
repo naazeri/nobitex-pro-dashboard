@@ -1,9 +1,13 @@
 import io
 import csv
+import time
+import urllib.request
+import json
 import webbrowser
 from pathlib import Path
-from typing import Optional
-from datetime import datetime, timezone
+from typing import Optional, List, Dict, Any, Tuple
+from datetime import datetime, timezone, timedelta
+from collections import defaultdict
 import zoneinfo
 
 TEHRAN_TZ = zoneinfo.ZoneInfo("Asia/Tehran")
@@ -40,6 +44,8 @@ from nob.db import (
     get_all_journal_entries,
     delete_journal_entry,
     get_journal_tags_summary,
+    get_chart_state,
+    save_chart_state,
 )
 from nob.nobitex_client import NobitexClient
 from nob.pnl import (
@@ -516,6 +522,210 @@ def api_export_csv(
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+class ChartStateRequest(BaseModel):
+    symbol: str
+    overlays: Optional[List[Dict[str, Any]]] = None
+    indicators: Optional[List[str]] = None
+    timeframe: Optional[str] = "1D"
+
+
+# In-memory candle cache: key -> (expire_time, data)
+_candle_cache: Dict[str, Tuple[float, Any]] = {}
+
+
+@app.get("/api/chart/candles")
+def api_get_candles(
+    symbol: str = "BTCUSDT",
+    resolution: str = "D",
+    from_ts: Optional[int] = None,
+    to_ts: Optional[int] = None,
+):
+    """
+    Fetch OHLCV candles from Nobitex UDF API with in-memory caching and weekly aggregation.
+    Supports resolutions: 15, 30, 60 (1H), 240 (4H), D (1D), 1W (Weekly).
+    """
+    clean_symbol = symbol.replace("-", "").replace("/", "").upper()
+
+    # Handle restricted currency pairs (USDT/IRT, DAI/IRT)
+    if clean_symbol in ["USDTIRT", "DAIIRT"]:
+        return {
+            "status": "restricted",
+            "symbol": clean_symbol,
+            "message": "Access restricted by exchange (HTTP 403 Forbidden). Nobitex removed public UDF charts for this pair.",
+            "candles": [],
+        }
+
+    now = int(time.time())
+    if to_ts is None:
+        to_ts = now
+
+    if from_ts is None:
+        if resolution in ["D", "1W"]:
+            from_ts = to_ts - (365 * 86400)  # 1 year
+        elif resolution in ["60", "240"]:
+            from_ts = to_ts - (60 * 86400)   # 60 days
+        else:
+            from_ts = to_ts - (14 * 86400)   # 14 days
+
+    cache_key = f"{clean_symbol}:{resolution}:{from_ts // 60}:{to_ts // 60}"
+    cached = _candle_cache.get(cache_key)
+    if cached and cached[0] > time.time():
+        return cached[1]
+
+    fetch_res = "D" if resolution == "1W" else resolution
+    fetch_from = from_ts - (7 * 86400) if resolution == "1W" else from_ts
+
+    url = f"https://apiv2.nobitex.ir/market/udf/history?symbol={clean_symbol}&resolution={fetch_res}&from={fetch_from}&to={to_ts}"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        if e.code == 403:
+            return {
+                "status": "restricted",
+                "symbol": clean_symbol,
+                "message": "Access restricted by exchange (HTTP 403 Forbidden)",
+                "candles": [],
+            }
+        raise HTTPException(status_code=502, detail=f"Nobitex UDF Error: HTTP {e.code}")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Nobitex UDF Network Error: {str(e)}")
+
+    if data.get("s") != "ok":
+        return {
+            "status": "no_data",
+            "symbol": clean_symbol,
+            "resolution": resolution,
+            "candles": [],
+        }
+
+    t_arr = data.get("t", [])
+    o_arr = data.get("o", [])
+    h_arr = data.get("h", [])
+    l_arr = data.get("l", [])
+    c_arr = data.get("c", [])
+    v_arr = data.get("v", [])
+
+    candles = []
+    if resolution == "1W":
+        weeks = defaultdict(list)
+        for t, o, h, l, c, v in zip(t_arr, o_arr, h_arr, l_arr, c_arr, v_arr):
+            dt = datetime.fromtimestamp(t, tz=timezone.utc)
+            start_of_week = dt - timedelta(days=dt.weekday())
+            w_ts = int(start_of_week.replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+            weeks[w_ts].append((t, o, h, l, c, v))
+
+        for w_ts in sorted(weeks.keys()):
+            bars = weeks[w_ts]
+            candles.append({
+                "timestamp": w_ts * 1000,
+                "open": float(bars[0][1]),
+                "high": float(max(b[2] for b in bars)),
+                "low": float(min(b[3] for b in bars)),
+                "close": float(bars[-1][4]),
+                "volume": float(sum(b[5] for b in bars)),
+            })
+    else:
+        for t, o, h, l, c, v in zip(t_arr, o_arr, h_arr, l_arr, c_arr, v_arr):
+            candles.append({
+                "timestamp": int(t) * 1000,
+                "open": float(o),
+                "high": float(h),
+                "low": float(l),
+                "close": float(c),
+                "volume": float(v) if v is not None else 0.0,
+            })
+
+    result = {
+        "status": "ok",
+        "symbol": clean_symbol,
+        "resolution": resolution,
+        "candles": candles,
+    }
+
+    _candle_cache[cache_key] = (time.time() + 60, result)
+    return result
+
+
+@app.get("/api/chart/state")
+def api_get_chart_state(symbol: str = "BTCUSDT"):
+    """Retrieve saved overlays, indicators, and timeframe for a symbol."""
+    return get_chart_state(symbol)
+
+
+@app.post("/api/chart/state")
+def api_save_chart_state(payload: ChartStateRequest):
+    """Save overlays, indicators, and timeframe for a symbol."""
+    success = save_chart_state(
+        symbol=payload.symbol,
+        overlays=payload.overlays,
+        indicators=payload.indicators,
+        timeframe=payload.timeframe,
+    )
+    return {"status": "ok", "saved": success}
+
+
+@app.get("/api/chart/symbols")
+def api_get_chart_symbols():
+    """
+    Return list of available markets for charting with latest price and 24h change.
+    """
+    prices = get_market_prices()
+    symbols_list = []
+
+    POPULAR_SYMBOLS = [
+        "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT",
+        "SUIUSDT", "BNBUSDT", "PEPEUSDT", "SHIBUSDT", "ADAUSDT",
+        "AVAXUSDT", "NEARUSDT", "TONUSDT", "LINKUSDT", "TRXUSDT", "LTCUSDT"
+    ]
+
+    for m_key, info in prices.items():
+        if m_key.endswith("-usdt"):
+            base = m_key[:-5].upper()
+            sym = f"{base}USDT"
+            symbols_list.append({
+                "symbol": sym,
+                "base": base,
+                "quote": "USDT",
+                "price": info.get("latest", 0.0),
+                "dayChange": info.get("dayChange", 0.0),
+                "is_restricted": False,
+            })
+
+    # Add restricted pairs with clear flags
+    symbols_list.append({
+        "symbol": "USDTIRT",
+        "base": "USDT",
+        "quote": "IRT",
+        "price": 0.0,
+        "dayChange": 0.0,
+        "is_restricted": True,
+        "restriction_reason": "محدودیت رگولاتوری نوبیتکس (HTTP 403)",
+    })
+    symbols_list.append({
+        "symbol": "DAIIRT",
+        "base": "DAI",
+        "quote": "IRT",
+        "price": 0.0,
+        "dayChange": 0.0,
+        "is_restricted": True,
+        "restriction_reason": "محدودیت رگولاتوری نوبیتکس (HTTP 403)",
+    })
+
+    def sort_key(item):
+        sym = item["symbol"]
+        if sym in POPULAR_SYMBOLS:
+            return (0, POPULAR_SYMBOLS.index(sym))
+        if item.get("is_restricted"):
+            return (2, sym)
+        return (1, sym)
+
+    symbols_list.sort(key=sort_key)
+    return symbols_list
 
 
 # Serve index.html

@@ -10,6 +10,7 @@
   <script src="/static/vendor/tailwind.js"></script>
   <script src="/static/vendor/jalaali.min.js"></script>
   <script src="/static/vendor/chart.umd.min.js"></script>
+  <script src="/static/vendor/klinecharts.min.js"></script>
 
   <script>
     tailwind.config = {
@@ -172,6 +173,13 @@
         <span v-if="positionsSummary.active_count > 0" class="px-1.5 py-0.2 rounded-full bg-emerald-500 text-slate-950 font-bold text-[10px]">
           {{ positionsSummary.active_count }}
         </span>
+      </button>
+
+      <button 
+        @click="switchTab('chart')" 
+        class="px-4 py-2 rounded-lg text-xs font-bold transition flex items-center gap-2"
+        :class="activeTab === 'chart' ? 'bg-cyan-600 text-white shadow-md shadow-cyan-600/30' : 'bg-slate-900 text-slate-300 hover:bg-slate-800'">
+        <span>{{ t('tabChart') }}</span>
       </button>
 
       <button 
@@ -674,6 +682,12 @@
                   <div class="flex items-center gap-2.5">
                     <img :src="getAssetIcon(h.symbol)" :alt="h.symbol" class="w-7 h-7 rounded-full flex-shrink-0 bg-slate-800 p-0.5 border border-slate-700/60 object-contain" @error="handleImgError($event)" />
                     <span class="tracking-wide">{{ h.symbol }}</span>
+                    <button 
+                      @click.stop="openChartForSymbol(h.symbol + 'USDT')" 
+                      :title="t('viewChart')" 
+                      class="opacity-60 hover:opacity-100 hover:text-cyan-400 text-xs transition p-0.5 cursor-pointer">
+                      📈
+                    </button>
                     <span v-if="h.current_value < 1.0" class="text-[9px] px-1 py-0.2 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 font-mono">DUST</span>
                   </div>
                 </td>
@@ -1163,6 +1177,12 @@
                   <div class="flex items-center gap-2">
                     <img :src="getAssetIcon(p.src_currency)" class="w-5 h-5 rounded-full flex-shrink-0 bg-slate-800 p-0.5 object-contain" @error="handleImgError($event)" />
                     <span>{{ formatMarket(p.src_currency + '-' + p.dst_currency) }}</span>
+                    <button 
+                      @click.stop="openChartForSymbol(p.src_currency + 'USDT')" 
+                      :title="t('viewChart')" 
+                      class="opacity-60 hover:opacity-100 hover:text-cyan-400 text-xs transition p-0.5 cursor-pointer">
+                      📈
+                    </button>
                   </div>
                 </td>
                 <td class="py-3 px-4 whitespace-nowrap">
@@ -1392,6 +1412,12 @@
                   <div class="flex items-center gap-2">
                     <img :src="getAssetIcon(p.src_currency)" class="w-5 h-5 rounded-full flex-shrink-0 bg-slate-800 p-0.5 object-contain" @error="handleImgError($event)" />
                     <span>{{ formatMarket(p.src_currency + '-' + p.dst_currency) }}</span>
+                    <button 
+                      @click.stop="openChartForSymbol(p.src_currency + 'USDT')" 
+                      :title="t('viewChart')" 
+                      class="opacity-60 hover:opacity-100 hover:text-cyan-400 text-xs transition p-0.5 cursor-pointer">
+                      📈
+                    </button>
                   </div>
                 </td>
                 <td class="py-3 px-4 whitespace-nowrap">
@@ -2202,6 +2228,226 @@
     </div>
 
     <!-- ========================================== -->
+    <!-- TAB 5: ADVANCED PRICE CHART (TradingView)  -->
+    <!-- ========================================== -->
+    <div v-show="activeTab === 'chart'" class="space-y-4">
+      
+      <!-- Top Chart Control Bar -->
+      <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-sm flex flex-col gap-4">
+        
+        <!-- Row 1: Symbol Selector & Quick Pairs & Price Info -->
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          
+          <!-- Left: Symbol Picker & Quick Chips -->
+          <div class="flex flex-wrap items-center gap-2">
+            <!-- Searchable Dropdown / Selector -->
+            <div class="relative">
+              <button 
+                @click="chartIsSearchOpen = !chartIsSearchOpen"
+                class="px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-700 hover:border-cyan-500/60 text-white font-bold text-sm flex items-center gap-2.5 transition shadow-inner cursor-pointer">
+                <span class="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-pulse"></span>
+                <span>{{ currentChartSymbolInfo.base }}/{{ currentChartSymbolInfo.quote }}</span>
+                <span class="text-xs text-slate-400">▼</span>
+              </button>
+
+              <!-- Dropdown Menu -->
+              <div 
+                v-if="chartIsSearchOpen" 
+                class="absolute z-40 top-full mt-2 w-72 max-h-80 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl flex flex-col overflow-hidden"
+                :class="currentLang === 'fa' ? 'right-0 text-right' : 'left-0 text-left'">
+                
+                <div class="p-2 border-b border-slate-800 bg-slate-950">
+                  <input 
+                    type="text" 
+                    v-model="chartSearchQuery" 
+                    :placeholder="t('searchPairPlaceholder')" 
+                    class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500"
+                    autofocus />
+                </div>
+
+                <div class="overflow-y-auto max-h-64 divide-y divide-slate-800/60">
+                  <button 
+                    v-for="s in filteredChartSymbols" 
+                    :key="s.symbol" 
+                    @click="selectChartSymbol(s.symbol)"
+                    class="w-full px-3 py-2 text-xs flex items-center justify-between hover:bg-slate-800/70 transition cursor-pointer"
+                    :class="s.symbol === chartSymbol ? 'bg-cyan-500/10 text-cyan-300 font-bold' : 'text-slate-200'">
+                    <div class="flex items-center gap-2">
+                      <span class="font-bold">{{ s.base }}</span>
+                      <span class="text-[10px] text-slate-400">/{{ s.quote }}</span>
+                      <span v-if="s.is_restricted" class="text-[9px] px-1 py-0.2 bg-amber-500/20 text-amber-300 rounded border border-amber-500/30">محدود</span>
+                    </div>
+                    <div v-if="!s.is_restricted" class="text-right font-mono text-[11px]">
+                      <div>${{ formatNumber(s.price) }}</div>
+                      <div :class="s.dayChange >= 0 ? 'text-emerald-400' : 'text-rose-400'" class="text-[10px]">
+                        {{ formatSignedPercent(s.dayChange, 2) }}
+                      </div>
+                    </div>
+                  </button>
+                  <div v-if="filteredChartSymbols.length === 0" class="p-4 text-center text-xs text-slate-500">
+                    موردی یافت نشد
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Quick Popular Symbol Buttons -->
+            <div class="hidden sm:flex items-center gap-1.5">
+              <button 
+                v-for="sym in ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'DOGEUSDT', 'SUIUSDT']" 
+                :key="sym"
+                @click="selectChartSymbol(sym)"
+                class="px-2.5 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer"
+                :class="chartSymbol === sym ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40' : 'bg-slate-950/80 hover:bg-slate-800 text-slate-400 border border-slate-800'">
+                {{ sym.replace('USDT', '') }}
+              </button>
+            </div>
+          </div>
+
+          <!-- Right: Price Details & Auto-Save Toast -->
+          <div class="flex items-center gap-4">
+            <div v-if="!currentChartSymbolInfo.is_restricted" class="flex items-center gap-3">
+              <span class="text-xs text-slate-400 hidden md:inline">{{ t('colMarketPrice') }}:</span>
+              <span class="text-lg font-bold text-white font-mono bidi-num">${{ formatNumber(currentChartSymbolInfo.price) }}</span>
+              <span 
+                class="px-2 py-0.5 rounded text-xs font-semibold border font-mono bidi-num"
+                :class="currentChartSymbolInfo.dayChange >= 0 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border-rose-500/20'">
+                {{ formatSignedPercent(currentChartSymbolInfo.dayChange, 2) }}
+              </span>
+            </div>
+
+            <!-- Save indicator -->
+            <transition name="fade">
+              <div v-if="chartSaveToast" class="px-2.5 py-1 rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs flex items-center gap-1.5">
+                <span>✓</span>
+                <span>{{ t('drawingsSaved') }}</span>
+              </div>
+            </transition>
+          </div>
+        </div>
+
+        <!-- Row 2: Timeframes, Indicators & Drawing Tools Toolbar -->
+        <div class="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-800/80">
+          
+          <!-- Timeframe Group -->
+          <div class="flex items-center gap-1 bg-slate-950/80 p-1 rounded-xl border border-slate-800">
+            <span class="text-[11px] font-semibold text-slate-400 px-2 hidden lg:inline">{{ t('timeframe') }}</span>
+            <button 
+              v-for="tf in ['15m', '30m', '1H', '4H', '1D', '1W']" 
+              :key="tf"
+              @click="selectChartTimeframe(tf)"
+              class="px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer"
+              :class="chartTimeframe === tf ? 'bg-cyan-600 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-slate-800/60'">
+              {{ tf }}
+            </button>
+          </div>
+
+          <!-- Indicators Group -->
+          <div class="flex items-center gap-1 bg-slate-950/80 p-1 rounded-xl border border-slate-800">
+            <span class="text-[11px] font-semibold text-slate-400 px-2 hidden lg:inline">{{ t('indicators') }}</span>
+            <button 
+              v-for="ind in ['VOL', 'MA', 'EMA', 'BOLL', 'MACD', 'RSI']" 
+              :key="ind"
+              @click="toggleIndicator(ind)"
+              class="px-2 py-1 rounded-lg text-xs font-semibold transition cursor-pointer"
+              :class="activeIndicators.includes(ind) ? 'bg-indigo-600/30 text-indigo-300 border border-indigo-500/50' : 'text-slate-400 hover:text-white hover:bg-slate-800/60'">
+              {{ ind }}
+            </button>
+          </div>
+
+          <!-- Drawing Tools Group -->
+          <div class="flex items-center gap-1 bg-slate-950/80 p-1 rounded-xl border border-slate-800">
+            <span class="text-[11px] font-semibold text-slate-400 px-2 hidden xl:inline">{{ t('drawingTools') }}</span>
+            <button 
+              @click="createDrawing('segment')" 
+              :title="t('toolTrendLine')"
+              class="p-1.5 rounded-lg text-slate-300 hover:text-cyan-400 hover:bg-slate-800 transition text-xs font-bold flex items-center gap-1 cursor-pointer">
+              <span>📏</span>
+              <span class="hidden md:inline">{{ t('toolTrendLine') }}</span>
+            </button>
+            <button 
+              @click="createDrawing('horizontalStraightLine')" 
+              :title="t('toolHorizontal')"
+              class="p-1.5 rounded-lg text-slate-300 hover:text-cyan-400 hover:bg-slate-800 transition text-xs font-bold flex items-center gap-1 cursor-pointer">
+              <span>➖</span>
+              <span class="hidden md:inline">{{ t('toolHorizontal') }}</span>
+            </button>
+            <button 
+              @click="createDrawing('rayLine')" 
+              :title="t('toolRay')"
+              class="p-1.5 rounded-lg text-slate-300 hover:text-cyan-400 hover:bg-slate-800 transition text-xs font-bold flex items-center gap-1 cursor-pointer">
+              <span>↗️</span>
+              <span class="hidden md:inline">{{ t('toolRay') }}</span>
+            </button>
+            <button 
+              @click="createDrawing('priceLine')" 
+              :title="t('toolPriceLine')"
+              class="p-1.5 rounded-lg text-slate-300 hover:text-cyan-400 hover:bg-slate-800 transition text-xs font-bold flex items-center gap-1 cursor-pointer">
+              <span>🏷️</span>
+              <span class="hidden md:inline">{{ t('toolPriceLine') }}</span>
+            </button>
+            <button 
+              @click="createDrawing('parallelStraightLine')" 
+              :title="t('toolChannel')"
+              class="p-1.5 rounded-lg text-slate-300 hover:text-cyan-400 hover:bg-slate-800 transition text-xs font-bold flex items-center gap-1 cursor-pointer">
+              <span>📐</span>
+              <span class="hidden md:inline">{{ t('toolChannel') }}</span>
+            </button>
+            <button 
+              @click="createDrawing('fibonacciLine')" 
+              :title="t('toolFibonacci')"
+              class="p-1.5 rounded-lg text-slate-300 hover:text-cyan-400 hover:bg-slate-800 transition text-xs font-bold flex items-center gap-1 cursor-pointer">
+              <span>🌀</span>
+              <span class="hidden md:inline">{{ t('toolFibonacci') }}</span>
+            </button>
+            <button 
+              @click="createDrawing('rect')" 
+              :title="t('toolRect')"
+              class="p-1.5 rounded-lg text-slate-300 hover:text-cyan-400 hover:bg-slate-800 transition text-xs font-bold flex items-center gap-1 cursor-pointer">
+              <span>⬛</span>
+              <span class="hidden md:inline">{{ t('toolRect') }}</span>
+            </button>
+            <button 
+              @click="clearAllDrawings" 
+              :title="t('toolClear')"
+              class="p-1.5 rounded-lg text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 transition text-xs font-bold flex items-center gap-1 border-l border-slate-800 cursor-pointer">
+              <span>🗑️</span>
+              <span class="hidden md:inline">{{ t('toolClear') }}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Restricted Alert if selected pair is blocked by exchange -->
+      <div v-if="chartRestricted" class="p-4 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 flex items-center gap-3">
+        <span class="text-xl">⚠️</span>
+        <div>
+          <h4 class="font-bold text-sm">{{ t('chartRestrictedNotice') }}</h4>
+          <p class="text-xs text-amber-200/80 mt-0.5">
+            صرافی نوبیتکس اندپوینت‌های چارت عمومی جفت‌ارزهای تتر/ریال و دای/ریال را به دلیل الزامات رگولاتوری مسدود کرده است.
+          </p>
+        </div>
+      </div>
+
+      <!-- Chart Viewport Container -->
+      <div class="relative bg-slate-950 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden p-2 min-h-[640px]">
+        <!-- Loading Spinner -->
+        <div v-if="chartLoading" class="absolute inset-0 z-30 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center">
+          <div class="flex flex-col items-center gap-3 text-cyan-400">
+            <svg class="animate-spin h-8 w-8 text-cyan-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <span class="text-xs font-bold tracking-wider">در حال بارگذاری کندل‌ها...</span>
+          </div>
+        </div>
+
+        <!-- KlineChart DOM element -->
+        <div id="kline-chart-container" class="w-full h-[620px]"></div>
+      </div>
+    </div>
+
+    <!-- ========================================== -->
     <!-- POSITION SIZE & RISK CALCULATOR MODAL      -->
     <!-- ========================================== -->
     <div 
@@ -2857,6 +3103,9 @@
           currentLang.value = currentLang.value === 'en' ? 'fa' : 'en';
           applyLanguageSettings(currentLang.value);
           renderCharts();
+          if (klineChartInstance) {
+            updateChartLocaleAndFormatter();
+          }
         }
 
         function t(key) {
@@ -2869,6 +3118,8 @@
             nextTick(() => renderCharts());
           } else if (tab === 'calendar') {
             fetchCalendarData();
+          } else if (tab === 'chart') {
+            nextTick(() => initOrResizeChart());
           }
         }
 
@@ -4192,6 +4443,7 @@
           fetchCalendarData();
           fetchEquityCurve();
           fetchJournal();
+          fetchChartSymbols();
 
           // 1. Auto-trigger sync on page open (per user request)
           triggerSync();
@@ -4685,11 +4937,432 @@
               if (isCalculatorOpen.value) {
                 closeCalculatorModal();
               }
+              chartIsSearchOpen.value = false;
             }
           });
         }
 
+        // ==========================================
+        // ADVANCED PRICE CHART (TradingView Style)
+        // ==========================================
+        const chartSymbol = ref('BTCUSDT');
+        const chartTimeframe = ref('1D'); // '15m', '30m', '1H', '4H', '1D', '1W'
+        const chartSymbols = ref([]);
+        const chartSearchQuery = ref('');
+        const chartIsSearchOpen = ref(false);
+        const chartLoading = ref(false);
+        const chartRestricted = ref(false);
+        const chartSaveToast = ref(false);
+        const activeIndicators = ref(['VOL']);
+        let klineChartInstance = null;
+        let chartSaveTimeout = null;
+        let isApplyingSavedState = false;
+
+        const currentChartSymbolInfo = computed(() => {
+          return chartSymbols.value.find(s => s.symbol === chartSymbol.value) || {
+            symbol: chartSymbol.value,
+            base: chartSymbol.value.replace('USDT', ''),
+            quote: 'USDT',
+            price: 0,
+            dayChange: 0,
+            is_restricted: chartSymbol.value.includes('IRT')
+          };
+        });
+
+        const filteredChartSymbols = computed(() => {
+          const q = chartSearchQuery.value.trim().toLowerCase();
+          if (!q) return chartSymbols.value;
+          return chartSymbols.value.filter(s => 
+            s.symbol.toLowerCase().includes(q) || 
+            s.base.toLowerCase().includes(q)
+          );
+        });
+
+        function getResolutionForTimeframe(tf) {
+          switch (tf) {
+            case '15m': return '15';
+            case '30m': return '30';
+            case '1H': return '60';
+            case '4H': return '240';
+            case '1D': return 'D';
+            case '1W': return '1W';
+            default: return 'D';
+          }
+        }
+
+        function getPeriodForTimeframe(tf) {
+          switch (tf) {
+            case '15m': return { type: 'minute', span: 15 };
+            case '30m': return { type: 'minute', span: 30 };
+            case '1H': return { type: 'hour', span: 1 };
+            case '4H': return { type: 'hour', span: 4 };
+            case '1D': return { type: 'day', span: 1 };
+            case '1W': return { type: 'week', span: 1 };
+            default: return { type: 'day', span: 1 };
+          }
+        }
+
+        async function fetchChartSymbols() {
+          try {
+            const resp = await fetch('/api/chart/symbols');
+            if (resp.ok) {
+              chartSymbols.value = await resp.json();
+            }
+          } catch (e) {
+            console.error('Error fetching chart symbols:', e);
+          }
+        }
+
+        function updateChartLocaleAndFormatter() {
+          if (!klineChartInstance) return;
+          klineChartInstance.setFormatter({
+            formatDate: ({ dateTime, type }) => {
+              const dt = new Date(dateTime);
+              if (isNaN(dt.getTime())) return '';
+
+              const isFa = currentLang.value === 'fa' && window.jalaali;
+              // Official Iran Standard Time (UTC+03:30, no seasonal DST changes)
+              const tehranMs = dt.getTime() + (3 * 60 + 30) * 60 * 1000;
+              const dTehran = new Date(tehranMs);
+              const gy = dTehran.getUTCFullYear();
+              const gm = dTehran.getUTCMonth() + 1;
+              const gd = dTehran.getUTCDate();
+              const hh = String(dTehran.getUTCHours()).padStart(2, '0');
+              const mm = String(dTehran.getUTCMinutes()).padStart(2, '0');
+
+              if (isFa) {
+                const j = window.jalaali.toJalaali(gy, gm, gd);
+                if (type === 'xAxis') {
+                  return `${j.jy}/${String(j.jm).padStart(2, '0')}/${String(j.jd).padStart(2, '0')}`;
+                }
+                return `${j.jy}/${String(j.jm).padStart(2, '0')}/${String(j.jd).padStart(2, '0')} ${hh}:${mm}`;
+              } else {
+                if (type === 'xAxis') {
+                  return `${gy}-${String(gm).padStart(2, '0')}-${String(gd).padStart(2, '0')}`;
+                }
+                return `${gy}-${String(gm).padStart(2, '0')}-${String(gd).padStart(2, '0')} ${hh}:${mm}`;
+              }
+            }
+          });
+        }
+
+        async function fetchCandlesData(symbol, tf) {
+          chartLoading.value = true;
+          try {
+            const res = getResolutionForTimeframe(tf);
+            const resp = await fetch(`/api/chart/candles?symbol=${encodeURIComponent(symbol)}&resolution=${res}`);
+            const data = await resp.json();
+            if (data.status === 'restricted') {
+              chartRestricted.value = true;
+              return [];
+            }
+            chartRestricted.value = false;
+            return data.candles || [];
+          } catch (e) {
+            console.error('Error fetching candles:', e);
+            return [];
+          } finally {
+            chartLoading.value = false;
+          }
+        }
+
+        async function loadChartSavedState(symbol) {
+          try {
+            const resp = await fetch(`/api/chart/state?symbol=${encodeURIComponent(symbol)}`);
+            if (resp.ok) {
+              return await resp.json();
+            }
+          } catch (e) {
+            console.error('Error loading chart state:', e);
+          }
+          return null;
+        }
+
+        function debounceSaveChartState() {
+          if (!klineChartInstance || isApplyingSavedState) return;
+          clearTimeout(chartSaveTimeout);
+          chartSaveTimeout = setTimeout(async () => {
+            try {
+              const overlays = klineChartInstance.getOverlays().map(ov => ({
+                id: ov.id,
+                groupId: ov.groupId,
+                name: ov.name,
+                points: ov.points,
+                styles: ov.styles,
+                lock: ov.lock
+              }));
+
+              await fetch('/api/chart/state', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  symbol: chartSymbol.value,
+                  overlays: overlays,
+                  indicators: activeIndicators.value,
+                  timeframe: chartTimeframe.value
+                })
+              });
+
+              chartSaveToast.value = true;
+              setTimeout(() => { chartSaveToast.value = false; }, 2000);
+            } catch (e) {
+              console.error('Error saving chart state:', e);
+            }
+          }, 600);
+        }
+
+        function syncChartIndicators() {
+          if (!klineChartInstance) return;
+          const currentIndicators = klineChartInstance.getIndicators();
+          const currentNames = currentIndicators.map(i => i.name);
+
+          const mainpanes = ['MA', 'EMA', 'BOLL'];
+
+          // Remove indicators that are no longer active
+          currentNames.forEach(name => {
+            if (!activeIndicators.value.includes(name)) {
+              klineChartInstance.removeIndicator({ name });
+            }
+          });
+
+          // Add newly activated indicators
+          activeIndicators.value.forEach(name => {
+            if (!currentNames.includes(name)) {
+              if (mainpanes.includes(name)) {
+                klineChartInstance.createIndicator(name, false, { id: 'candle_pane' });
+              } else {
+                klineChartInstance.createIndicator(name, true);
+              }
+            }
+          });
+        }
+
+        async function applySavedStateToChart(state) {
+          if (!klineChartInstance || !state) return;
+          isApplyingSavedState = true;
+          try {
+            if (state.timeframe && state.timeframe !== chartTimeframe.value) {
+              chartTimeframe.value = state.timeframe;
+            }
+
+            if (Array.isArray(state.indicators)) {
+              activeIndicators.value = state.indicators;
+            } else {
+              activeIndicators.value = ['VOL'];
+            }
+            syncChartIndicators();
+
+            klineChartInstance.removeOverlay();
+            if (Array.isArray(state.overlays)) {
+              state.overlays.forEach(ov => {
+                if (ov && ov.name) {
+                  klineChartInstance.createOverlay({
+                    id: ov.id,
+                    groupId: ov.groupId,
+                    name: ov.name,
+                    points: ov.points,
+                    styles: ov.styles,
+                    lock: ov.lock,
+                    onDrawEnd: () => debounceSaveChartState(),
+                    onPressedMoveEnd: () => debounceSaveChartState(),
+                    onRemoved: () => debounceSaveChartState()
+                  });
+                }
+              });
+            }
+          } finally {
+            isApplyingSavedState = false;
+          }
+        }
+
+        async function initOrResizeChart() {
+          const dom = document.getElementById('kline-chart-container');
+          if (!dom) return;
+
+          if (klineChartInstance) {
+            klineChartInstance.resize();
+            return;
+          }
+
+          if (!window.klinecharts) {
+            console.error('klinecharts library not loaded');
+            return;
+          }
+
+          const darkStyles = {
+            grid: {
+              horizontal: { color: 'rgba(51, 65, 85, 0.25)', style: 'dash', dashValue: [4, 4] },
+              vertical: { color: 'rgba(51, 65, 85, 0.25)', style: 'dash', dashValue: [4, 4] }
+            },
+            candle: {
+              bar: {
+                upColor: '#10b981',
+                downColor: '#ef4444',
+                noChangeColor: '#94a3b8',
+                upBorderColor: '#10b981',
+                downBorderColor: '#ef4444',
+                noChangeBorderColor: '#94a3b8',
+                upWickColor: '#10b981',
+                downWickColor: '#ef4444',
+                noChangeWickColor: '#94a3b8'
+              },
+              priceMark: {
+                last: {
+                  upColor: '#10b981',
+                  downColor: '#ef4444',
+                  noChangeColor: '#94a3b8'
+                }
+              },
+              tooltip: {
+                text: { color: '#e2e8f0', size: 12 }
+              }
+            },
+            xAxis: {
+              axisLine: { color: '#334155' },
+              tickLine: { color: '#334155' },
+              tickText: { color: '#94a3b8', size: 11 }
+            },
+            yAxis: {
+              axisLine: { color: '#334155' },
+              tickLine: { color: '#334155' },
+              tickText: { color: '#94a3b8', size: 11 }
+            },
+            separator: { color: '#334155' },
+            crosshair: {
+              horizontal: {
+                line: { color: '#64748b', style: 'dash', dashValue: [4, 4] },
+                text: { backgroundColor: '#1e293b', color: '#f8fafc' }
+              },
+              vertical: {
+                line: { color: '#64748b', style: 'dash', dashValue: [4, 4] },
+                text: { backgroundColor: '#1e293b', color: '#f8fafc' }
+              }
+            },
+            overlay: {
+              point: {
+                color: '#38bdf8',
+                borderColor: '#0284c7',
+                activeColor: '#0284c7',
+                activeBorderColor: '#38bdf8',
+                radius: 4,
+                activeRadius: 5
+              },
+              line: { color: '#38bdf8', size: 2 },
+              rect: { borderColor: '#38bdf8', fillColor: 'rgba(56, 189, 248, 0.15)' }
+            }
+          };
+
+          klineChartInstance = window.klinecharts.init(dom, {
+            styles: darkStyles
+          });
+
+          updateChartLocaleAndFormatter();
+
+          klineChartInstance.setDataLoader({
+            getBars: async (params) => {
+              const bars = await fetchCandlesData(chartSymbol.value, chartTimeframe.value);
+              params.callback(bars, { forward: false, backward: false });
+            }
+          });
+
+          klineChartInstance.setSymbol({
+            ticker: chartSymbol.value,
+            pricePrecision: 2,
+            volumePrecision: 4
+          });
+          klineChartInstance.setPeriod(getPeriodForTimeframe(chartTimeframe.value));
+
+          const savedState = await loadChartSavedState(chartSymbol.value);
+          if (savedState) {
+            await applySavedStateToChart(savedState);
+          } else {
+            syncChartIndicators();
+          }
+        }
+
+        async function selectChartSymbol(symbol) {
+          chartSymbol.value = symbol;
+          chartIsSearchOpen.value = false;
+          if (klineChartInstance) {
+            klineChartInstance.setSymbol({
+              ticker: symbol,
+              pricePrecision: 2,
+              volumePrecision: 4
+            });
+            const savedState = await loadChartSavedState(symbol);
+            if (savedState) {
+              await applySavedStateToChart(savedState);
+            } else {
+              klineChartInstance.removeOverlay();
+              syncChartIndicators();
+            }
+            klineChartInstance.resetData();
+          }
+        }
+
+        async function selectChartTimeframe(tf) {
+          chartTimeframe.value = tf;
+          if (klineChartInstance) {
+            klineChartInstance.setPeriod(getPeriodForTimeframe(tf));
+            klineChartInstance.resetData();
+            debounceSaveChartState();
+          }
+        }
+
+        function toggleIndicator(ind) {
+          const idx = activeIndicators.value.indexOf(ind);
+          if (idx !== -1) {
+            activeIndicators.value.splice(idx, 1);
+          } else {
+            activeIndicators.value.push(ind);
+          }
+          syncChartIndicators();
+          debounceSaveChartState();
+        }
+
+        function createDrawing(toolName) {
+          if (!klineChartInstance) return;
+          klineChartInstance.createOverlay({
+            name: toolName,
+            onDrawEnd: () => debounceSaveChartState(),
+            onPressedMoveEnd: () => debounceSaveChartState(),
+            onRemoved: () => debounceSaveChartState()
+          });
+        }
+
+        function clearAllDrawings() {
+          if (!klineChartInstance) return;
+          klineChartInstance.removeOverlay();
+          debounceSaveChartState();
+        }
+
+        function openChartForSymbol(sym) {
+          activeTab.value = 'chart';
+          nextTick(async () => {
+            await initOrResizeChart();
+            await selectChartSymbol(sym);
+          });
+        }
+
         return {
+          // Chart exports
+          chartSymbol,
+          chartTimeframe,
+          chartSymbols,
+          chartSearchQuery,
+          chartIsSearchOpen,
+          chartLoading,
+          chartRestricted,
+          chartSaveToast,
+          activeIndicators,
+          currentChartSymbolInfo,
+          filteredChartSymbols,
+          selectChartSymbol,
+          selectChartTimeframe,
+          toggleIndicator,
+          createDrawing,
+          clearAllDrawings,
+          openChartForSymbol,
           currentLang,
           toggleLanguage,
           t,

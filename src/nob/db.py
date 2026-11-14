@@ -162,6 +162,16 @@ def init_db(db_path: Optional[Path] = None):
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_journal_trade ON trade_journal(trade_id);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_journal_pos ON trade_journal(position_id);")
 
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS chart_drawings (
+                symbol TEXT PRIMARY KEY,
+                overlays TEXT DEFAULT '[]',
+                indicators TEXT DEFAULT '[]',
+                timeframe TEXT DEFAULT '1D',
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
         conn.commit()
 
 
@@ -911,6 +921,78 @@ def get_journal_tags_summary(db_path: Optional[Path] = None) -> List[Dict[str, A
     summary = [{"tag": k, "count": v} for k, v in tag_counts.items()]
     summary.sort(key=lambda x: x["count"], reverse=True)
     return summary
+
+
+def get_chart_state(symbol: str, db_path: Optional[Path] = None) -> Dict[str, Any]:
+    """Retrieve saved overlays, indicators, and timeframe for a symbol."""
+    init_db(db_path)
+    clean_symbol = symbol.strip().upper()
+    with get_db_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT symbol, overlays, indicators, timeframe, updated_at FROM chart_drawings WHERE symbol = ?",
+            (clean_symbol,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return {
+                "symbol": clean_symbol,
+                "overlays": [],
+                "indicators": ["VOL"],
+                "timeframe": "1D",
+                "updated_at": None,
+            }
+
+        try:
+            overlays = json.loads(row["overlays"] or "[]")
+        except Exception:
+            overlays = []
+        try:
+            indicators = json.loads(row["indicators"] or "[]")
+        except Exception:
+            indicators = ["VOL"]
+
+        return {
+            "symbol": row["symbol"],
+            "overlays": overlays,
+            "indicators": indicators,
+            "timeframe": row["timeframe"] or "1D",
+            "updated_at": row["updated_at"],
+        }
+
+
+def save_chart_state(
+    symbol: str,
+    overlays: Optional[List[Dict[str, Any]]] = None,
+    indicators: Optional[List[str]] = None,
+    timeframe: Optional[str] = None,
+    db_path: Optional[Path] = None,
+) -> bool:
+    """Save or update chart overlays, active indicators, and timeframe for a symbol."""
+    init_db(db_path)
+    clean_symbol = symbol.strip().upper()
+    overlays_json = json.dumps(overlays or [])
+    indicators_json = json.dumps(indicators or ["VOL"])
+    tf = timeframe or "1D"
+    now_str = datetime.now().isoformat()
+
+    with get_db_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO chart_drawings (symbol, overlays, indicators, timeframe, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(symbol) DO UPDATE SET
+                overlays = excluded.overlays,
+                indicators = excluded.indicators,
+                timeframe = excluded.timeframe,
+                updated_at = excluded.updated_at
+            """,
+            (clean_symbol, overlays_json, indicators_json, tf, now_str),
+        )
+        conn.commit()
+        return True
+
 
 
 
