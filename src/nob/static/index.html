@@ -28,6 +28,36 @@
         }
       }
     };
+
+    // Guarantee Canvas 2D contexts for charts always use LTR text direction
+    if (typeof CanvasRenderingContext2D !== 'undefined') {
+      const origFillText = CanvasRenderingContext2D.prototype.fillText;
+      CanvasRenderingContext2D.prototype.fillText = function(...args) {
+        if (this.direction !== 'ltr') {
+          this.direction = 'ltr';
+        }
+        return origFillText.apply(this, args);
+      };
+      const origMeasureText = CanvasRenderingContext2D.prototype.measureText;
+      CanvasRenderingContext2D.prototype.measureText = function(...args) {
+        if (this.direction !== 'ltr') {
+          this.direction = 'ltr';
+        }
+        return origMeasureText.apply(this, args);
+      };
+    }
+    if (typeof HTMLCanvasElement !== 'undefined') {
+      const origGetContext = HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = function(type, ...args) {
+        const ctx = origGetContext.apply(this, [type, ...args]);
+        if (ctx && type === '2d') {
+          try {
+            ctx.direction = 'ltr';
+          } catch (_) {}
+        }
+        return ctx;
+      };
+    }
   </script>
 
   <style>
@@ -55,10 +85,26 @@
 
     /* BiDi protection: Ensure currencies ($), signs (+/-), and percentages (%) strictly render LTR */
     .bidi-num,
-    [dir="ltr"] {
+    span[dir="ltr"],
+    b[dir="ltr"],
+    code[dir="ltr"] {
       direction: ltr !important;
       unicode-bidi: isolate !important;
       display: inline-block;
+    }
+
+    /* KlineChart Canvas & Viewport: strictly LTR display */
+    .chart-viewport-card,
+    #kline-chart-container {
+      display: block !important;
+      width: 100% !important;
+    }
+    #kline-chart-container,
+    #kline-chart-container *,
+    #kline-chart-container canvas {
+      direction: ltr !important;
+      text-align: left !important;
+      unicode-bidi: isolate !important;
     }
 
     html[dir="ltr"] body {
@@ -2438,7 +2484,7 @@
       </div>
 
       <!-- Chart Viewport Container -->
-      <div class="relative bg-slate-950 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden p-2 min-h-[640px]">
+      <div dir="ltr" style="direction: ltr;" class="chart-viewport-card w-full relative bg-slate-950 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden p-2 min-h-[640px]">
         <!-- Loading Spinner -->
         <div v-if="chartLoading" class="absolute inset-0 z-30 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center">
           <div class="flex flex-col items-center gap-3 text-cyan-400">
@@ -2451,7 +2497,7 @@
         </div>
 
         <!-- KlineChart DOM element -->
-        <div id="kline-chart-container" class="w-full h-[620px]"></div>
+        <div id="kline-chart-container" dir="ltr" style="direction: ltr; text-align: left;" class="w-full h-[620px]"></div>
       </div>
     </div>
 
@@ -5090,6 +5136,7 @@
 
           // Trigger redraw of axes with updated font and language formatting
           try {
+            klineChartInstance.setLocale('en-US');
             klineChartInstance.setStyles({
               xAxis: {
                 tickText: {
@@ -5323,7 +5370,14 @@
                 }
               },
               tooltip: {
-                text: { color: '#e2e8f0', size: 12 }
+                title: { color: '#94a3b8', size: 12, family: 'Inter, system-ui, sans-serif' },
+                legend: { color: '#e2e8f0', size: 12, family: 'Inter, system-ui, sans-serif' }
+              }
+            },
+            indicator: {
+              tooltip: {
+                title: { color: '#94a3b8', size: 12, family: 'Inter, system-ui, sans-serif' },
+                legend: { color: '#e2e8f0', size: 12, family: 'Inter, system-ui, sans-serif' }
               }
             },
             xAxis: {
@@ -5363,6 +5417,11 @@
 
           klineChartInstance = window.klinecharts.init(dom, {
             styles: darkStyles
+          });
+
+          dom.querySelectorAll('canvas').forEach(cvs => {
+            cvs.style.direction = 'ltr';
+            cvs.setAttribute('dir', 'ltr');
           });
 
           updateChartLocaleAndFormatter();
