@@ -926,8 +926,12 @@ def serve_index():
     return index_file.read_text(encoding="utf-8")
 
 
-# Mount static directory
+# Mount static directory and TradingView packages
 if STATIC_DIR.is_dir():
+    tv_dir = STATIC_DIR / "vendor" / "tradingview"
+    if tv_dir.is_dir():
+        app.mount("/Packages/TradingView", StaticFiles(directory=str(tv_dir)), name="tv_packages")
+        app.mount("/static/tradingview", StaticFiles(directory=str(tv_dir)), name="tv_static")
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
