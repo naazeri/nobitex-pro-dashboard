@@ -5038,13 +5038,16 @@
         function updateChartLocaleAndFormatter() {
           if (!klineChartInstance) return;
           klineChartInstance.setFormatter({
-            formatDate: ({ dateTime, type }) => {
-              const dt = new Date(dateTime);
-              if (isNaN(dt.getTime())) return '';
+            formatDate: (params) => {
+              // params: { dateTimeFormat, timestamp, template, type } or direct number
+              const rawTs = typeof params === 'number' ? params : (params?.timestamp || params?.dateTime);
+              if (!rawTs) return '';
+              const numTs = Number(rawTs);
+              if (isNaN(numTs)) return '';
 
               const isFa = currentLang.value === 'fa' && window.jalaali;
               // Official Iran Standard Time (UTC+03:30, no seasonal DST changes)
-              const tehranMs = dt.getTime() + (3 * 60 + 30) * 60 * 1000;
+              const tehranMs = numTs + (3 * 60 + 30) * 60 * 1000;
               const dTehran = new Date(tehranMs);
               const gy = dTehran.getUTCFullYear();
               const gm = dTehran.getUTCMonth() + 1;
@@ -5052,20 +5055,53 @@
               const hh = String(dTehran.getUTCHours()).padStart(2, '0');
               const mm = String(dTehran.getUTCMinutes()).padStart(2, '0');
 
+              const type = params?.type || 'xAxis';
+              const isIntraday = ['15m', '30m', '1h', '4h'].includes(chartTimeframe.value);
+
               if (isFa) {
                 const j = window.jalaali.toJalaali(gy, gm, gd);
+                const jYear = j.jy;
+                const jMonth = String(j.jm).padStart(2, '0');
+                const jDay = String(j.jd).padStart(2, '0');
+
                 if (type === 'xAxis') {
-                  return `${j.jy}/${String(j.jm).padStart(2, '0')}/${String(j.jd).padStart(2, '0')}`;
+                  if (isIntraday) {
+                    return `${jMonth}/${jDay} ${hh}:${mm}`;
+                  }
+                  return `${jYear}/${jMonth}/${jDay}`;
                 }
-                return `${j.jy}/${String(j.jm).padStart(2, '0')}/${String(j.jd).padStart(2, '0')} ${hh}:${mm}`;
+                // crosshair & tooltip
+                return `${jYear}/${jMonth}/${jDay} ${hh}:${mm}`;
               } else {
+                const sMonth = String(gm).padStart(2, '0');
+                const sDay = String(gd).padStart(2, '0');
+
                 if (type === 'xAxis') {
-                  return `${gy}-${String(gm).padStart(2, '0')}-${String(gd).padStart(2, '0')}`;
+                  if (isIntraday) {
+                    return `${sMonth}-${sDay} ${hh}:${mm}`;
+                  }
+                  return `${gy}-${sMonth}-${sDay}`;
                 }
-                return `${gy}-${String(gm).padStart(2, '0')}-${String(gd).padStart(2, '0')} ${hh}:${mm}`;
+                // crosshair & tooltip
+                return `${gy}-${sMonth}-${sDay} ${hh}:${mm}`;
               }
             }
           });
+
+          // Trigger redraw of axes with updated font and language formatting
+          try {
+            klineChartInstance.setStyles({
+              xAxis: {
+                tickText: {
+                  family: currentLang.value === 'fa' ? 'Vazirmatn, sans-serif' : 'Inter, system-ui, sans-serif',
+                  color: '#94a3b8',
+                  size: 11
+                }
+              }
+            });
+          } catch (e) {
+            console.error('Error applying chart styles:', e);
+          }
         }
 
         async function fetchCandlesData(symbol, tf) {
