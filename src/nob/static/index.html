@@ -6042,11 +6042,17 @@
           }
         }
 
-        async function fetchCandlesData(symbol, tf) {
-          chartLoading.value = true;
+        async function fetchCandlesData(symbol, tf, from = null, to = null, isFirst = true) {
+          if (isFirst) {
+            chartLoading.value = true;
+          }
           try {
             const res = getResolutionForTimeframe(tf);
-            const resp = await fetch(`/api/chart/candles?symbol=${encodeURIComponent(symbol)}&resolution=${res}`);
+            let url = `/api/chart/candles?symbol=${encodeURIComponent(symbol)}&resolution=${res}`;
+            if (from !== null && from !== undefined) url += `&from_ts=${Math.floor(from)}`;
+            if (to !== null && to !== undefined) url += `&to_ts=${Math.floor(to)}`;
+
+            const resp = await fetch(url);
             const data = await resp.json();
             if (data.status === 'restricted') {
               chartRestricted.value = true;
@@ -6058,7 +6064,9 @@
             console.error('Error fetching candles:', e);
             return [];
           } finally {
-            chartLoading.value = false;
+            if (isFirst) {
+              chartLoading.value = false;
+            }
           }
         }
 
@@ -6182,11 +6190,16 @@
               else if (resolution === 'D' || resolution === '1D') tf = '1D';
               else if (resolution === 'W' || resolution === '1W') tf = '1W';
 
-              const res = await fetchCandlesData(symbolInfo.name, tf);
+              const from = periodParams?.from ? Math.floor(periodParams.from) : null;
+              const to = periodParams?.to ? Math.floor(periodParams.to) : null;
+              const isFirst = !!periodParams?.firstDataRequest;
+
+              const res = await fetchCandlesData(symbolInfo.name, tf, from, to, isFirst);
               if (!res || res.length === 0) {
                 onHistoryCallback([], { noData: true });
                 return;
               }
+
               const bars = res.map(c => ({
                 time: c.timestamp,
                 open: c.open,
@@ -6195,7 +6208,23 @@
                 close: c.close,
                 volume: c.volume
               }));
-              onHistoryCallback(bars, { noData: bars.length === 0 });
+
+              // If historical pagination request (not firstDataRequest),
+              // ensure we don't loop if no bars are older than `to`.
+              if (!isFirst && to) {
+                const olderBars = bars.filter(b => b.time < to * 1000);
+                if (olderBars.length === 0) {
+                  onHistoryCallback([], { noData: true });
+                  return;
+                }
+                const hasNoMore = olderBars.length < (periodParams?.countBack || 50);
+                onHistoryCallback(olderBars, { noData: hasNoMore });
+                return;
+              }
+
+              // First request: signal noData if fewer bars than countBack were returned
+              const hasNoMoreHistory = bars.length < (periodParams?.countBack || 50);
+              onHistoryCallback(bars, { noData: hasNoMoreHistory });
             } catch (err) {
               console.error('TradingView Datafeed getBars error:', err);
               onErrorCallback(err);

@@ -579,7 +579,9 @@ def api_get_candles(
         to_ts = now
 
     if from_ts is None:
-        if res_norm in ["D", "1W"]:
+        if res_norm == "1W":
+            from_ts = to_ts - (5 * 365 * 86400)  # 5 years for weekly
+        elif res_norm == "D":
             from_ts = to_ts - (365 * 86400)  # 1 year
         elif res_norm in ["60", "240"]:
             from_ts = to_ts - (60 * 86400)   # 60 days
@@ -616,7 +618,7 @@ def api_get_candles(
         return {
             "status": "no_data",
             "symbol": clean_symbol,
-            "resolution": resolution,
+            "resolution": res_norm,
             "candles": [],
         }
 
@@ -628,7 +630,7 @@ def api_get_candles(
     v_arr = data.get("v", [])
 
     candles = []
-    if resolution == "1W":
+    if res_norm == "1W":
         weeks = defaultdict(list)
         for t, o, h, l, c, v in zip(t_arr, o_arr, h_arr, l_arr, c_arr, v_arr):
             dt = datetime.fromtimestamp(t, tz=timezone.utc)
@@ -660,7 +662,7 @@ def api_get_candles(
     result = {
         "status": "ok",
         "symbol": clean_symbol,
-        "resolution": resolution,
+        "resolution": res_norm,
         "candles": candles,
     }
 
