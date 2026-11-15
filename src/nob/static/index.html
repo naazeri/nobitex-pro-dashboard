@@ -10,8 +10,6 @@
   <script src="/static/vendor/tailwind.js"></script>
   <script src="/static/vendor/jalaali.min.js"></script>
   <script src="/static/vendor/chart.umd.min.js"></script>
-  <script src="/static/vendor/klinecharts.min.js"></script>
-  <script src="/static/vendor/lightweight-charts.standalone.production.js"></script>
   <script src="/static/vendor/tradingview/charting_library.js"></script>
 
   <script>
@@ -95,15 +93,15 @@
       display: inline-block;
     }
 
-    /* KlineChart Canvas & Viewport: strictly LTR display */
+    /* TradingView Chart Container & Viewport: strictly LTR display */
     .chart-viewport-card,
-    #kline-chart-container {
+    #tv-chart-container {
       display: block !important;
       width: 100% !important;
     }
-    #kline-chart-container,
-    #kline-chart-container *,
-    #kline-chart-container canvas {
+    #tv-chart-container,
+    #tv-chart-container *,
+    #tv-chart-container iframe {
       direction: ltr !important;
       text-align: left !important;
       unicode-bidi: isolate !important;
@@ -2898,48 +2896,6 @@
       <!-- Top Chart Control Bar -->
       <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-sm flex flex-col gap-4">
         
-        <!-- Row 0: Chart Engine Switcher -->
-        <div class="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800/80 bg-slate-950/60 p-2.5 rounded-xl">
-          <div class="flex items-center gap-2">
-            <span class="text-xs font-bold text-slate-300 flex items-center gap-1.5">
-              <span>🎛️</span>
-              <span>{{ t('chartEngine') }}</span>
-            </span>
-          </div>
-
-          <div class="flex flex-wrap items-center gap-2">
-            <!-- Engine 1: KLineCharts -->
-            <button 
-              @click="setChartEngine('kline')"
-              class="px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
-              :class="chartEngine === 'kline' ? 'bg-cyan-600 text-white shadow-md shadow-cyan-600/30 ring-1 ring-cyan-400' : 'bg-slate-900 text-slate-400 hover:text-white hover:bg-slate-800 border border-slate-800'"
-              :title="t('engineKlineDesc')">
-              <span>🟩</span>
-              <span>{{ t('engineKline') }}</span>
-            </button>
-
-            <!-- Engine 2: TradingView Advanced -->
-            <button 
-              @click="setChartEngine('tv_adv')"
-              class="px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
-              :class="chartEngine === 'tv_adv' ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30 ring-1 ring-blue-400' : 'bg-slate-900 text-slate-400 hover:text-white hover:bg-slate-800 border border-slate-800'"
-              :title="t('engineTvAdvDesc')">
-              <span>🟦</span>
-              <span>{{ t('engineTvAdv') }}</span>
-            </button>
-
-            <!-- Engine 3: Lightweight Charts -->
-            <button 
-              @click="setChartEngine('tv_light')"
-              class="px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
-              :class="chartEngine === 'tv_light' ? 'bg-amber-600 text-white shadow-md shadow-amber-600/30 ring-1 ring-amber-400' : 'bg-slate-900 text-slate-400 hover:text-white hover:bg-slate-800 border border-slate-800'"
-              :title="t('engineTvLightDesc')">
-              <span>🟨</span>
-              <span>{{ t('engineTvLight') }}</span>
-            </button>
-          </div>
-        </div>
-
         <!-- Row 1: Symbol Selector & Quick Pairs & Price Info -->
         <div class="flex flex-wrap items-center justify-between gap-3">
           
@@ -3009,7 +2965,7 @@
             </div>
           </div>
 
-          <!-- Right: Price Details & Auto-Save Toast -->
+          <!-- Right: Price Details -->
           <div class="flex items-center gap-4">
             <div v-if="!currentChartSymbolInfo.is_restricted" class="flex items-center gap-3">
               <span class="text-xs text-slate-400 hidden md:inline">{{ t('colMarketPrice') }}:</span>
@@ -3020,145 +2976,6 @@
                 {{ formatSignedPercent(currentChartSymbolInfo.dayChange, 2) }}
               </span>
             </div>
-
-            <!-- Save indicator -->
-            <transition name="fade">
-              <div v-if="chartSaveToast" class="px-2.5 py-1 rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs flex items-center gap-1.5">
-                <span>✓</span>
-                <span>{{ t('drawingsSaved') }}</span>
-              </div>
-            </transition>
-          </div>
-        </div>
-
-        <!-- Row 2: Controls Toolbar -->
-        <!-- Shown for Engine 1: KLineCharts -->
-        <div v-show="chartEngine === 'kline'" class="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-800/80">
-          
-          <!-- Timeframe Group -->
-          <div class="flex items-center gap-1 bg-slate-950/80 p-1 rounded-xl border border-slate-800">
-            <span class="text-[11px] font-semibold text-slate-400 px-2 hidden lg:inline">{{ t('timeframe') }}</span>
-            <button 
-              v-for="tf in ['15m', '30m', '1h', '4h', '1D', '1W']" 
-              :key="tf"
-              @click="selectChartTimeframe(tf)"
-              class="px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer"
-              :class="chartTimeframe === tf ? 'bg-cyan-600 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-slate-800/60'">
-              {{ tf }}
-            </button>
-          </div>
-
-          <!-- Indicators Group -->
-          <div class="flex items-center gap-1 bg-slate-950/80 p-1 rounded-xl border border-slate-800">
-            <span class="text-[11px] font-semibold text-slate-400 px-2 hidden lg:inline">{{ t('indicators') }}</span>
-            <button 
-              v-for="ind in ['VOL', 'MA', 'EMA', 'BOLL', 'MACD', 'RSI']" 
-              :key="ind"
-              @click="toggleIndicator(ind)"
-              class="px-2 py-1 rounded-lg text-xs font-semibold transition cursor-pointer"
-              :class="activeIndicators.includes(ind) ? 'bg-indigo-600/30 text-indigo-300 border border-indigo-500/50' : 'text-slate-400 hover:text-white hover:bg-slate-800/60'">
-              {{ ind }}
-            </button>
-          </div>
-
-          <!-- Drawing Tools Group -->
-          <div class="flex items-center gap-1 bg-slate-950/80 p-1 rounded-xl border border-slate-800">
-            <span class="text-[11px] font-semibold text-slate-400 px-2 hidden xl:inline">{{ t('drawingTools') }}</span>
-            <button 
-              @click="createDrawing('segment')" 
-              :title="t('toolTrendLine')"
-              class="p-1.5 rounded-lg text-slate-300 hover:text-cyan-400 hover:bg-slate-800 transition text-xs font-bold flex items-center gap-1 cursor-pointer">
-              <span>📏</span>
-              <span class="hidden md:inline">{{ t('toolTrendLine') }}</span>
-            </button>
-            <button 
-              @click="createDrawing('horizontalStraightLine')" 
-              :title="t('toolHorizontal')"
-              class="p-1.5 rounded-lg text-slate-300 hover:text-cyan-400 hover:bg-slate-800 transition text-xs font-bold flex items-center gap-1 cursor-pointer">
-              <span>➖</span>
-              <span class="hidden md:inline">{{ t('toolHorizontal') }}</span>
-            </button>
-            <button 
-              @click="createDrawing('rayLine')" 
-              :title="t('toolRay')"
-              class="p-1.5 rounded-lg text-slate-300 hover:text-cyan-400 hover:bg-slate-800 transition text-xs font-bold flex items-center gap-1 cursor-pointer">
-              <span>↗️</span>
-              <span class="hidden md:inline">{{ t('toolRay') }}</span>
-            </button>
-            <button 
-              @click="createDrawing('priceLine')" 
-              :title="t('toolPriceLine')"
-              class="p-1.5 rounded-lg text-slate-300 hover:text-cyan-400 hover:bg-slate-800 transition text-xs font-bold flex items-center gap-1 cursor-pointer">
-              <span>🏷️</span>
-              <span class="hidden md:inline">{{ t('toolPriceLine') }}</span>
-            </button>
-            <button 
-              @click="createDrawing('parallelStraightLine')" 
-              :title="t('toolChannel')"
-              class="p-1.5 rounded-lg text-slate-300 hover:text-cyan-400 hover:bg-slate-800 transition text-xs font-bold flex items-center gap-1 cursor-pointer">
-              <span>📐</span>
-              <span class="hidden md:inline">{{ t('toolChannel') }}</span>
-            </button>
-            <button 
-              @click="createDrawing('fibonacciLine')" 
-              :title="t('toolFibonacci')"
-              class="p-1.5 rounded-lg text-slate-300 hover:text-cyan-400 hover:bg-slate-800 transition text-xs font-bold flex items-center gap-1 cursor-pointer">
-              <span>🌀</span>
-              <span class="hidden md:inline">{{ t('toolFibonacci') }}</span>
-            </button>
-            <button 
-              @click="createDrawing('rect')" 
-              :title="t('toolRect')"
-              class="p-1.5 rounded-lg text-slate-300 hover:text-cyan-400 hover:bg-slate-800 transition text-xs font-bold flex items-center gap-1 cursor-pointer">
-              <span>⬛</span>
-              <span class="hidden md:inline">{{ t('toolRect') }}</span>
-            </button>
-            <button 
-              v-if="selectedOverlayId"
-              @click="deleteSelectedOverlay" 
-              :title="t('toolDeleteSelected')"
-              class="px-2 py-1 rounded-lg bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 border border-rose-500/40 transition text-xs font-bold flex items-center gap-1 cursor-pointer animate-pulse">
-              <span>✕</span>
-              <span class="hidden md:inline">{{ t('toolDeleteSelected') }}</span>
-            </button>
-            <button 
-              @click="clearAllDrawings" 
-              :title="t('toolClear')"
-              class="p-1.5 rounded-lg text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 transition text-xs font-bold flex items-center gap-1 border-l border-slate-800 cursor-pointer">
-              <span>🗑️</span>
-              <span class="hidden md:inline">{{ t('toolClear') }}</span>
-            </button>
-          </div>
-        </div>
-
-        <!-- Shown for Engine 2: TradingView Advanced -->
-        <div v-show="chartEngine === 'tv_adv'" class="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-800/80 text-xs">
-          <div class="flex items-center gap-2 text-blue-400 bg-blue-500/10 border border-blue-500/20 px-3 py-1.5 rounded-lg">
-            <span>ℹ️</span>
-            <span>تمام نوارهای ابزار، بازه‌های زمانی، اندیکاتورها و ابزارهای رسم در فریم رسمی تریدینگ‌ویو (بالا و سمت چپ) در دسترس هستند.</span>
-          </div>
-          <div class="flex items-center gap-2 text-slate-400">
-            <span class="font-mono text-[11px] bg-slate-950 px-2 py-0.5 rounded border border-slate-800">CL v28.5.0</span>
-            <span>باندل مستقل TradingView Advanced</span>
-          </div>
-        </div>
-
-        <!-- Shown for Engine 3: Lightweight Charts -->
-        <div v-show="chartEngine === 'tv_light'" class="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-800/80">
-          <div class="flex items-center gap-1 bg-slate-950/80 p-1 rounded-xl border border-slate-800">
-            <span class="text-[11px] font-semibold text-slate-400 px-2 hidden lg:inline">{{ t('timeframe') }}</span>
-            <button 
-              v-for="tf in ['15m', '30m', '1h', '4h', '1D', '1W']" 
-              :key="tf"
-              @click="selectChartTimeframe(tf)"
-              class="px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer"
-              :class="chartTimeframe === tf ? 'bg-amber-600 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-slate-800/60'">
-              {{ tf }}
-            </button>
-          </div>
-          <div class="text-xs text-amber-400/90 flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 px-3 py-1.5 rounded-lg">
-            <span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
-            <span>TradingView Lightweight Charts (نمایش بسیار سبک، رندر ۶۰ فریم بر ثانیه)</span>
           </div>
         </div>
       </div>
@@ -3175,32 +2992,8 @@
       </div>
 
       <!-- Chart Viewport Container -->
-      <div dir="ltr" style="direction: ltr;" class="chart-viewport-card w-full relative bg-slate-950 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden p-2 min-h-[660px]">
-        <!-- Loading Spinner -->
-        <div v-if="chartLoading && chartEngine !== 'tv_adv'" class="absolute inset-0 z-30 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center">
-          <div class="flex flex-col items-center gap-3 text-cyan-400">
-            <svg class="animate-spin h-8 w-8 text-cyan-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-            <span class="text-xs font-bold tracking-wider">در حال بارگذاری کندل‌ها...</span>
-          </div>
-        </div>
-
-        <!-- Engine 1: KlineChart Wrapper -->
-        <div :class="chartEngine === 'kline' ? 'block' : 'hidden'" class="w-full h-[640px]">
-          <div id="kline-chart-container" dir="ltr" style="direction: ltr; text-align: left;" class="w-full h-full"></div>
-        </div>
-
-        <!-- Engine 2: TradingView Advanced Wrapper -->
-        <div :class="chartEngine === 'tv_adv' ? 'block' : 'hidden'" class="w-full h-[660px]">
-          <div id="tv-adv-chart-container" dir="ltr" style="direction: ltr; text-align: left;" class="w-full h-full"></div>
-        </div>
-
-        <!-- Engine 3: Lightweight Charts Wrapper -->
-        <div :class="chartEngine === 'tv_light' ? 'block' : 'hidden'" class="w-full h-[640px]">
-          <div id="tv-light-chart-container" dir="ltr" style="direction: ltr; text-align: left;" class="w-full h-full"></div>
-        </div>
+      <div dir="ltr" style="direction: ltr;" class="chart-viewport-card w-full relative bg-slate-950 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden min-h-[680px]">
+        <div id="tv-chart-container" dir="ltr" style="direction: ltr; text-align: left;" class="w-full h-[680px]"></div>
       </div>
     </div>
 
@@ -4200,9 +3993,6 @@
           currentLang.value = currentLang.value === 'en' ? 'fa' : 'en';
           applyLanguageSettings(currentLang.value);
           renderCharts();
-          if (klineChartInstance) {
-            updateChartLocaleAndFormatter();
-          }
         }
 
         function t(key) {
@@ -4217,9 +4007,7 @@
             fetchCalendarData();
           } else if (tab === 'chart') {
             nextTick(() => {
-              if (chartEngine.value === 'kline') initOrResizeChart();
-              else if (chartEngine.value === 'tv_adv') initTvAdvChart();
-              else if (chartEngine.value === 'tv_light') initLwChart();
+              initTradingViewChart();
             });
           } else if (tab === 'orders') {
             fetchOpenOrders();
@@ -5687,9 +5475,7 @@
 
           if (activeTab.value === 'chart') {
             nextTick(() => {
-              if (chartEngine.value === 'kline') initOrResizeChart();
-              else if (chartEngine.value === 'tv_adv') initTvAdvChart();
-              else if (chartEngine.value === 'tv_light') initLwChart();
+              initTradingViewChart();
             });
           } else if (activeTab.value === 'spot') {
             nextTick(() => renderCharts());
@@ -6195,21 +5981,12 @@
                 closeCalculatorModal();
               }
               chartIsSearchOpen.value = false;
-            } else if (e.key === 'Delete' || e.key === 'Backspace') {
-              const tag = document.activeElement ? document.activeElement.tagName.toLowerCase() : '';
-              if (tag === 'input' || tag === 'textarea' || document.activeElement?.isContentEditable) {
-                return;
-              }
-              if (activeTab.value === 'chart' && selectedOverlayId.value && klineChartInstance) {
-                e.preventDefault();
-                deleteSelectedOverlay();
-              }
             }
           });
         }
 
         // ==========================================
-        // ADVANCED PRICE CHART (TradingView Style)
+        // ADVANCED PRICE CHART (TradingView)
         // ==========================================
         const chartSymbol = ref('BTCUSDT');
         const chartTimeframe = ref('1D'); // '15m', '30m', '1h', '4h', '1D', '1W'
@@ -6218,17 +5995,7 @@
         const chartIsSearchOpen = ref(false);
         const chartLoading = ref(false);
         const chartRestricted = ref(false);
-        const chartSaveToast = ref(false);
-        const activeIndicators = ref(['VOL']);
-        const selectedOverlayId = ref(null);
-        let klineChartInstance = null;
-        let chartSaveTimeout = null;
-        let isApplyingSavedState = false;
-        const chartEngine = ref('kline'); // 'kline' | 'tv_adv' | 'tv_light'
-        let tvAdvWidgetInstance = null;
-        let lwChartInstance = null;
-        let lwCandleSeries = null;
-        let lwVolumeSeries = null;
+        let tvWidgetInstance = null;
 
         const currentChartSymbolInfo = computed(() => {
           return chartSymbols.value.find(s => s.symbol === chartSymbol.value) || {
@@ -6264,20 +6031,6 @@
           }
         }
 
-        function getPeriodForTimeframe(tf) {
-          switch (tf) {
-            case '15m': return { type: 'minute', span: 15 };
-            case '30m': return { type: 'minute', span: 30 };
-            case '1h':
-            case '1H': return { type: 'hour', span: 1 };
-            case '4h':
-            case '4H': return { type: 'hour', span: 4 };
-            case '1D': return { type: 'day', span: 1 };
-            case '1W': return { type: 'week', span: 1 };
-            default: return { type: 'day', span: 1 };
-          }
-        }
-
         async function fetchChartSymbols() {
           try {
             const resp = await fetch('/api/chart/symbols');
@@ -6286,76 +6039,6 @@
             }
           } catch (e) {
             console.error('Error fetching chart symbols:', e);
-          }
-        }
-
-        function updateChartLocaleAndFormatter() {
-          if (!klineChartInstance) return;
-          klineChartInstance.setFormatter({
-            formatDate: (params) => {
-              // params: { dateTimeFormat, timestamp, template, type } or direct number
-              const rawTs = typeof params === 'number' ? params : (params?.timestamp || params?.dateTime);
-              if (!rawTs) return '';
-              const numTs = Number(rawTs);
-              if (isNaN(numTs)) return '';
-
-              const isFa = currentLang.value === 'fa' && window.jalaali;
-              // Official Iran Standard Time (UTC+03:30, no seasonal DST changes)
-              const tehranMs = numTs + (3 * 60 + 30) * 60 * 1000;
-              const dTehran = new Date(tehranMs);
-              const gy = dTehran.getUTCFullYear();
-              const gm = dTehran.getUTCMonth() + 1;
-              const gd = dTehran.getUTCDate();
-              const hh = String(dTehran.getUTCHours()).padStart(2, '0');
-              const mm = String(dTehran.getUTCMinutes()).padStart(2, '0');
-
-              const type = params?.type || 'xAxis';
-              const isIntraday = ['15m', '30m', '1h', '4h'].includes(chartTimeframe.value);
-
-              if (isFa) {
-                const j = window.jalaali.toJalaali(gy, gm, gd);
-                const jYear = j.jy;
-                const jMonth = String(j.jm).padStart(2, '0');
-                const jDay = String(j.jd).padStart(2, '0');
-
-                if (type === 'xAxis') {
-                  if (isIntraday) {
-                    return `${jMonth}/${jDay} ${hh}:${mm}`;
-                  }
-                  return `${jYear}/${jMonth}/${jDay}`;
-                }
-                // crosshair & tooltip
-                return `${jYear}/${jMonth}/${jDay} ${hh}:${mm}`;
-              } else {
-                const sMonth = String(gm).padStart(2, '0');
-                const sDay = String(gd).padStart(2, '0');
-
-                if (type === 'xAxis') {
-                  if (isIntraday) {
-                    return `${sMonth}-${sDay} ${hh}:${mm}`;
-                  }
-                  return `${gy}-${sMonth}-${sDay}`;
-                }
-                // crosshair & tooltip
-                return `${gy}-${sMonth}-${sDay} ${hh}:${mm}`;
-              }
-            }
-          });
-
-          // Trigger redraw of axes with updated font and language formatting
-          try {
-            klineChartInstance.setLocale('en-US');
-            klineChartInstance.setStyles({
-              xAxis: {
-                tickText: {
-                  family: currentLang.value === 'fa' ? 'Vazirmatn, sans-serif' : 'Inter, system-ui, sans-serif',
-                  color: '#94a3b8',
-                  size: 11
-                }
-              }
-            });
-          } catch (e) {
-            console.error('Error applying chart styles:', e);
           }
         }
 
@@ -6379,377 +6062,34 @@
           }
         }
 
-        async function loadChartSavedState(symbol) {
-          try {
-            const resp = await fetch(`/api/chart/state?symbol=${encodeURIComponent(symbol)}`);
-            if (resp.ok) {
-              return await resp.json();
-            }
-          } catch (e) {
-            console.error('Error loading chart state:', e);
-          }
-          return null;
-        }
-
-        function debounceSaveChartState() {
-          if (!klineChartInstance || isApplyingSavedState) return;
-          clearTimeout(chartSaveTimeout);
-          chartSaveTimeout = setTimeout(async () => {
-            try {
-              const overlays = klineChartInstance.getOverlays().map(ov => ({
-                id: ov.id,
-                groupId: ov.groupId,
-                name: ov.name,
-                points: ov.points,
-                styles: ov.styles,
-                lock: ov.lock
-              }));
-
-              await fetch('/api/chart/state', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  symbol: chartSymbol.value,
-                  overlays: overlays,
-                  indicators: activeIndicators.value,
-                  timeframe: chartTimeframe.value
-                })
-              });
-
-              chartSaveToast.value = true;
-              setTimeout(() => { chartSaveToast.value = false; }, 2000);
-            } catch (e) {
-              console.error('Error saving chart state:', e);
-            }
-          }, 600);
-        }
-
-        function buildOverlayOptions(opts) {
-          return {
-            ...opts,
-            onSelected: (params) => {
-              const id = params?.overlay?.id || opts?.id;
-              if (id) selectedOverlayId.value = id;
-            },
-            onDeselected: (params) => {
-              const id = params?.overlay?.id || opts?.id;
-              if (id && selectedOverlayId.value === id) {
-                selectedOverlayId.value = null;
-              }
-            },
-            onClick: (params) => {
-              const id = params?.overlay?.id || opts?.id;
-              if (id) selectedOverlayId.value = id;
-            },
-            onRightClick: (params) => {
-              const id = params?.overlay?.id || opts?.id;
-              if (id) {
-                klineChartInstance.removeOverlay({ id });
-                selectedOverlayId.value = null;
-                debounceSaveChartState();
-                return true;
-              }
-            },
-            onDrawEnd: (params) => {
-              const id = params?.overlay?.id || opts?.id;
-              if (id) selectedOverlayId.value = id;
-              debounceSaveChartState();
-            },
-            onPressedMoveEnd: () => {
-              debounceSaveChartState();
-            },
-            onRemoved: () => {
-              debounceSaveChartState();
-            }
-          };
-        }
-
-        function syncChartIndicators() {
-          if (!klineChartInstance) return;
-          const currentIndicators = klineChartInstance.getIndicators();
-          const currentNames = currentIndicators.map(i => i.name);
-
-          const mainpanes = ['MA', 'EMA', 'BOLL'];
-
-          // Remove indicators that are no longer active
-          currentNames.forEach(name => {
-            if (!activeIndicators.value.includes(name)) {
-              klineChartInstance.removeIndicator({ name });
-            }
-          });
-
-          // Add newly activated indicators
-          activeIndicators.value.forEach(name => {
-            if (!currentNames.includes(name)) {
-              if (mainpanes.includes(name)) {
-                // TradingView style: Draw directly on the main candlestick chart
-                klineChartInstance.createIndicator({
-                  name: name,
-                  paneId: 'candle_pane'
-                }, false);
-              } else if (name === 'RSI') {
-                // TradingView style: Exactly 1 standard 14-period RSI line in subpane
-                klineChartInstance.createIndicator({
-                  name: 'RSI',
-                  calcParams: [14],
-                  figures: [{ key: 'rsi1', title: 'RSI(14): ', type: 'line' }]
-                }, true);
-              } else {
-                klineChartInstance.createIndicator({
-                  name: name
-                }, true);
-              }
-            }
-          });
-        }
-
-        async function applySavedStateToChart(state) {
-          if (!klineChartInstance || !state) return;
-          isApplyingSavedState = true;
-          try {
-            if (state.timeframe && state.timeframe !== chartTimeframe.value) {
-              chartTimeframe.value = state.timeframe;
-            }
-
-            if (Array.isArray(state.indicators)) {
-              activeIndicators.value = state.indicators;
-            } else {
-              activeIndicators.value = ['VOL'];
-            }
-            syncChartIndicators();
-
-            klineChartInstance.removeOverlay();
-            selectedOverlayId.value = null;
-            if (Array.isArray(state.overlays)) {
-              state.overlays.forEach(ov => {
-                if (ov && ov.name) {
-                  klineChartInstance.createOverlay(buildOverlayOptions({
-                    id: ov.id,
-                    groupId: ov.groupId,
-                    name: ov.name,
-                    points: ov.points,
-                    styles: ov.styles,
-                    lock: ov.lock
-                  }));
-                }
-              });
-            }
-          } finally {
-            isApplyingSavedState = false;
-          }
-        }
-
-        async function initOrResizeChart() {
-          const dom = document.getElementById('kline-chart-container');
-          if (!dom) return;
-
-          if (klineChartInstance) {
-            klineChartInstance.resize();
-            return;
-          }
-
-          if (!window.klinecharts) {
-            console.error('klinecharts library not loaded');
-            return;
-          }
-
-          const darkStyles = {
-            grid: {
-              horizontal: { color: 'rgba(51, 65, 85, 0.25)', style: 'dash', dashValue: [4, 4] },
-              vertical: { color: 'rgba(51, 65, 85, 0.25)', style: 'dash', dashValue: [4, 4] }
-            },
-            candle: {
-              bar: {
-                upColor: '#10b981',
-                downColor: '#ef4444',
-                noChangeColor: '#94a3b8',
-                upBorderColor: '#10b981',
-                downBorderColor: '#ef4444',
-                noChangeBorderColor: '#94a3b8',
-                upWickColor: '#10b981',
-                downWickColor: '#ef4444',
-                noChangeWickColor: '#94a3b8'
-              },
-              priceMark: {
-                last: {
-                  upColor: '#10b981',
-                  downColor: '#ef4444',
-                  noChangeColor: '#94a3b8'
-                }
-              },
-              tooltip: {
-                title: { color: '#94a3b8', size: 12, family: 'Inter, system-ui, sans-serif' },
-                legend: { color: '#e2e8f0', size: 12, family: 'Inter, system-ui, sans-serif' }
-              }
-            },
-            indicator: {
-              tooltip: {
-                title: { color: '#94a3b8', size: 12, family: 'Inter, system-ui, sans-serif' },
-                legend: { color: '#e2e8f0', size: 12, family: 'Inter, system-ui, sans-serif' }
-              }
-            },
-            xAxis: {
-              axisLine: { color: '#334155' },
-              tickLine: { color: '#334155' },
-              tickText: { color: '#94a3b8', size: 11 }
-            },
-            yAxis: {
-              axisLine: { color: '#334155' },
-              tickLine: { color: '#334155' },
-              tickText: { color: '#94a3b8', size: 11 }
-            },
-            separator: { color: '#334155' },
-            crosshair: {
-              horizontal: {
-                line: { color: '#64748b', style: 'dash', dashValue: [4, 4] },
-                text: { backgroundColor: '#1e293b', color: '#f8fafc' }
-              },
-              vertical: {
-                line: { color: '#64748b', style: 'dash', dashValue: [4, 4] },
-                text: { backgroundColor: '#1e293b', color: '#f8fafc' }
-              }
-            },
-            overlay: {
-              point: {
-                color: '#38bdf8',
-                borderColor: '#0284c7',
-                activeColor: '#0284c7',
-                activeBorderColor: '#38bdf8',
-                radius: 4,
-                activeRadius: 5
-              },
-              line: { color: '#38bdf8', size: 2 },
-              rect: { borderColor: '#38bdf8', fillColor: 'rgba(56, 189, 248, 0.15)' }
-            }
-          };
-
-          klineChartInstance = window.klinecharts.init(dom, {
-            styles: darkStyles
-          });
-
-          dom.querySelectorAll('canvas').forEach(cvs => {
-            cvs.style.direction = 'ltr';
-            cvs.setAttribute('dir', 'ltr');
-          });
-
-          updateChartLocaleAndFormatter();
-
-          klineChartInstance.setDataLoader({
-            getBars: async (params) => {
-              const bars = await fetchCandlesData(chartSymbol.value, chartTimeframe.value);
-              params.callback(bars, { forward: false, backward: false });
-            }
-          });
-
-          klineChartInstance.setSymbol({
-            ticker: chartSymbol.value,
-            pricePrecision: 2,
-            volumePrecision: 4
-          });
-          klineChartInstance.setPeriod(getPeriodForTimeframe(chartTimeframe.value));
-
-          const savedState = await loadChartSavedState(chartSymbol.value);
-          if (savedState) {
-            await applySavedStateToChart(savedState);
-          } else {
-            syncChartIndicators();
-          }
-        }
-
         async function selectChartSymbol(symbol) {
           chartSymbol.value = symbol;
           chartIsSearchOpen.value = false;
-          if (chartEngine.value === 'kline') {
-            if (klineChartInstance) {
-              klineChartInstance.setSymbol({
-                ticker: symbol,
-                pricePrecision: 2,
-                volumePrecision: 4
-              });
-              const savedState = await loadChartSavedState(symbol);
-              if (savedState) {
-                await applySavedStateToChart(savedState);
-              } else {
-                klineChartInstance.removeOverlay();
-                syncChartIndicators();
-              }
-              klineChartInstance.resetData();
+          if (tvWidgetInstance && tvWidgetInstance.activeChart) {
+            try {
+              tvWidgetInstance.activeChart().setSymbol(symbol);
+            } catch (e) {
+              console.error('TradingView setSymbol error:', e);
             }
-          } else if (chartEngine.value === 'tv_adv') {
-            if (tvAdvWidgetInstance && tvAdvWidgetInstance.activeChart) {
-              try {
-                tvAdvWidgetInstance.activeChart().setSymbol(symbol);
-              } catch (e) {
-                console.error('TV setSymbol error:', e);
-              }
-            }
-          } else if (chartEngine.value === 'tv_light') {
-            await loadLwChartData();
           }
         }
 
         async function selectChartTimeframe(tf) {
           chartTimeframe.value = tf;
-          if (chartEngine.value === 'kline') {
-            if (klineChartInstance) {
-              klineChartInstance.setPeriod(getPeriodForTimeframe(tf));
-              klineChartInstance.resetData();
-              debounceSaveChartState();
+          if (tvWidgetInstance && tvWidgetInstance.activeChart) {
+            const res = getResolutionForTimeframe(tf);
+            try {
+              tvWidgetInstance.activeChart().setResolution(res);
+            } catch (e) {
+              console.error('TradingView setResolution error:', e);
             }
-          } else if (chartEngine.value === 'tv_adv') {
-            if (tvAdvWidgetInstance && tvAdvWidgetInstance.activeChart) {
-              const res = getResolutionForTimeframe(tf);
-              try {
-                tvAdvWidgetInstance.activeChart().setResolution(res);
-              } catch (e) {}
-            }
-          } else if (chartEngine.value === 'tv_light') {
-            await loadLwChartData();
           }
-        }
-
-        function toggleIndicator(ind) {
-          const idx = activeIndicators.value.indexOf(ind);
-          if (idx !== -1) {
-            activeIndicators.value.splice(idx, 1);
-          } else {
-            activeIndicators.value.push(ind);
-          }
-          syncChartIndicators();
-          debounceSaveChartState();
-        }
-
-        function createDrawing(toolName) {
-          if (!klineChartInstance) return;
-          klineChartInstance.createOverlay(buildOverlayOptions({
-            name: toolName
-          }));
-        }
-
-        function deleteSelectedOverlay() {
-          if (!klineChartInstance || !selectedOverlayId.value) return;
-          klineChartInstance.removeOverlay({ id: selectedOverlayId.value });
-          selectedOverlayId.value = null;
-          debounceSaveChartState();
-        }
-
-        function clearAllDrawings() {
-          if (!klineChartInstance) return;
-          klineChartInstance.removeOverlay();
-          selectedOverlayId.value = null;
-          debounceSaveChartState();
         }
 
         function openChartForSymbol(sym) {
           activeTab.value = 'chart';
           nextTick(async () => {
-            if (chartEngine.value === 'kline') {
-              await initOrResizeChart();
-            } else if (chartEngine.value === 'tv_adv') {
-              initTvAdvChart();
-            } else if (chartEngine.value === 'tv_light') {
-              initLwChart();
-            }
+            initTradingViewChart();
             await selectChartSymbol(sym);
           });
         }
@@ -6784,7 +6124,7 @@
         }
 
         // ==========================================
-        // ENGINE 2: TRADINGVIEW ADVANCED (Servatmandi)
+        // TRADINGVIEW JS API DATAFEED & WIDGET
         // ==========================================
         const tvDatafeed = {
           onReady: (callback) => {
@@ -6857,7 +6197,7 @@
               }));
               onHistoryCallback(bars, { noData: bars.length === 0 });
             } catch (err) {
-              console.error('TV Datafeed getBars error:', err);
+              console.error('TradingView Datafeed getBars error:', err);
               onErrorCallback(err);
             }
           },
@@ -6865,15 +6205,15 @@
           unsubscribeBars: () => {}
         };
 
-        function initTvAdvChart() {
+        function initTradingViewChart() {
           if (!window.TradingView) {
             console.error('TradingView library not loaded');
             return;
           }
-          if (tvAdvWidgetInstance) {
+          if (tvWidgetInstance) {
             return;
           }
-          const dom = document.getElementById('tv-adv-chart-container');
+          const dom = document.getElementById('tv-chart-container');
           if (!dom) return;
 
           let res = 'D';
@@ -6883,8 +6223,8 @@
           else if (chartTimeframe.value === '4h') res = '240';
           else if (chartTimeframe.value === '1W') res = '1W';
 
-          tvAdvWidgetInstance = new window.TradingView.widget({
-            container: 'tv-adv-chart-container',
+          tvWidgetInstance = new window.TradingView.widget({
+            container: 'tv-chart-container',
             symbol: chartSymbol.value,
             interval: res,
             library_path: '/static/vendor/tradingview/',
@@ -6919,168 +6259,6 @@
         }
 
         // ==========================================
-        // ENGINE 3: LIGHTWEIGHT CHARTS (Official Free)
-        // ==========================================
-        function initLwChart() {
-          const dom = document.getElementById('tv-light-chart-container');
-          if (!dom) return;
-
-          if (lwChartInstance) {
-            lwChartInstance.applyOptions({ width: dom.clientWidth, height: 640 });
-            loadLwChartData();
-            return;
-          }
-
-          if (!window.LightweightCharts) {
-            console.error('LightweightCharts library not loaded');
-            return;
-          }
-
-          lwChartInstance = window.LightweightCharts.createChart(dom, {
-            width: dom.clientWidth || 800,
-            height: 640,
-            layout: {
-              background: { color: '#090d16' },
-              textColor: '#94a3b8',
-              fontFamily: 'Inter, system-ui, sans-serif',
-            },
-            grid: {
-              vertLines: { color: 'rgba(51, 65, 85, 0.25)', style: 1 },
-              horzLines: { color: 'rgba(51, 65, 85, 0.25)', style: 1 },
-            },
-            crosshair: {
-              mode: window.LightweightCharts.CrosshairMode.Normal,
-            },
-            rightPriceScale: {
-              borderColor: '#334155',
-            },
-            timeScale: {
-              borderColor: '#334155',
-              timeVisible: true,
-              secondsVisible: false,
-            },
-          });
-
-          // Support both Lightweight Charts v5 (addSeries) and v4 (addCandlestickSeries)
-          const lwc = window.LightweightCharts;
-          if (typeof lwChartInstance.addSeries === 'function' && lwc.CandlestickSeries) {
-            lwCandleSeries = lwChartInstance.addSeries(lwc.CandlestickSeries, {
-              upColor: '#10b981',
-              downColor: '#ef4444',
-              borderVisible: false,
-              wickUpColor: '#10b981',
-              wickDownColor: '#ef4444',
-            });
-            lwVolumeSeries = lwChartInstance.addSeries(lwc.HistogramSeries, {
-              color: '#38bdf8',
-              priceFormat: {
-                type: 'volume',
-              },
-              priceScaleId: '', // overlay volume on same price pane
-              scaleMargins: {
-                top: 0.8,
-                bottom: 0,
-              },
-            });
-          } else if (typeof lwChartInstance.addCandlestickSeries === 'function') {
-            lwCandleSeries = lwChartInstance.addCandlestickSeries({
-              upColor: '#10b981',
-              downColor: '#ef4444',
-              borderVisible: false,
-              wickUpColor: '#10b981',
-              wickDownColor: '#ef4444',
-            });
-            lwVolumeSeries = lwChartInstance.addHistogramSeries({
-              color: '#38bdf8',
-              priceFormat: {
-                type: 'volume',
-              },
-              priceScaleId: '',
-              scaleMargins: {
-                top: 0.8,
-                bottom: 0,
-              },
-            });
-          }
-
-          loadLwChartData();
-
-          window.addEventListener('resize', () => {
-            if (lwChartInstance && dom && dom.clientWidth) {
-              lwChartInstance.applyOptions({ width: dom.clientWidth });
-            }
-          });
-        }
-
-        async function loadLwChartData() {
-          if (!lwCandleSeries) return;
-          const rawBars = await fetchCandlesData(chartSymbol.value, chartTimeframe.value);
-          if (!rawBars || rawBars.length === 0) {
-            lwCandleSeries.setData([]);
-            lwVolumeSeries.setData([]);
-            return;
-          }
-
-          const timeMap = new Map();
-          for (const b of rawBars) {
-            const sec = Math.floor(b.timestamp / 1000);
-            timeMap.set(sec, b);
-          }
-          const sortedSecs = Array.from(timeMap.keys()).sort((a, b) => a - b);
-
-          const candleData = sortedSecs.map(sec => {
-            const b = timeMap.get(sec);
-            return {
-              time: sec,
-              open: b.open,
-              high: b.high,
-              low: b.low,
-              close: b.close
-            };
-          });
-
-          const volumeData = sortedSecs.map(sec => {
-            const b = timeMap.get(sec);
-            return {
-              time: sec,
-              value: b.volume,
-              color: b.close >= b.open ? 'rgba(16, 185, 129, 0.4)' : 'rgba(239, 68, 68, 0.4)'
-            };
-          });
-
-          lwCandleSeries.setData(candleData);
-          lwVolumeSeries.setData(volumeData);
-          if (lwChartInstance) {
-            lwChartInstance.timeScale().fitContent();
-          }
-        }
-
-        // ==========================================
-        // CHART ENGINE SWITCHER
-        // ==========================================
-        async function setChartEngine(engine) {
-          chartEngine.value = engine;
-          await nextTick();
-          if (engine === 'kline') {
-            if (!klineChartInstance) {
-              await initOrResizeChart();
-            } else {
-              klineChartInstance.resize();
-            }
-          } else if (engine === 'tv_adv') {
-            initTvAdvChart();
-            if (tvAdvWidgetInstance && tvAdvWidgetInstance.activeChart) {
-              try {
-                tvAdvWidgetInstance.activeChart().setSymbol(chartSymbol.value);
-              } catch (e) {}
-            }
-          } else if (engine === 'tv_light') {
-            initLwChart();
-            await loadLwChartData();
-          }
-        }
-
-        // ==========================================
         // URL STATE SYNCHRONIZATION (TABS & FILTERS)
         // ==========================================
         let isSyncingUrl = false;
@@ -7095,10 +6273,6 @@
           }
 
           // 2. Chart states
-          const eng = params.get('engine');
-          if (['kline', 'tv_adv', 'tv_light'].includes(eng)) {
-            chartEngine.value = eng;
-          }
           const sym = params.get('symbol') || params.get('sym');
           if (sym) {
             chartSymbol.value = sym.toUpperCase();
@@ -7194,9 +6368,6 @@
           }
 
           if (activeTab.value === 'chart') {
-            if (chartEngine.value && chartEngine.value !== 'kline') {
-              params.set('engine', chartEngine.value);
-            }
             if (chartSymbol.value && chartSymbol.value !== 'BTCUSDT') {
               params.set('symbol', chartSymbol.value);
             }
@@ -7271,7 +6442,6 @@
         watch(
           [
             activeTab,
-            chartEngine,
             chartSymbol,
             chartTimeframe,
             calendarMode,
@@ -7304,9 +6474,7 @@
             applyUrlState();
             if (activeTab.value === 'chart') {
               nextTick(() => {
-                if (chartEngine.value === 'kline') initOrResizeChart();
-                else if (chartEngine.value === 'tv_adv') initTvAdvChart();
-                else if (chartEngine.value === 'tv_light') initLwChart();
+                initTradingViewChart();
               });
             } else if (activeTab.value === 'spot') {
               nextTick(() => renderCharts());
@@ -7351,8 +6519,6 @@
           confirmCancelOrder,
 
           // Chart exports
-          chartEngine,
-          setChartEngine,
           chartSymbol,
           chartTimeframe,
           chartSymbols,
@@ -7360,17 +6526,10 @@
           chartIsSearchOpen,
           chartLoading,
           chartRestricted,
-          chartSaveToast,
-          activeIndicators,
-          selectedOverlayId,
-          deleteSelectedOverlay,
           currentChartSymbolInfo,
           filteredChartSymbols,
           selectChartSymbol,
           selectChartTimeframe,
-          toggleIndicator,
-          createDrawing,
-          clearAllDrawings,
           openChartForSymbol,
           currentLang,
           toggleLanguage,

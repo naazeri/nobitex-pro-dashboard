@@ -67,14 +67,7 @@ export const TRANSLATIONS = {
 
     // Chart View
     chartTitle: "Price Chart",
-    chartSubtitle: "TradingView-style interactive candlestick chart powered by Nobitex market feed",
-    chartEngine: "Chart Engine:",
-    engineKline: "KLineCharts (Current)",
-    engineTvAdv: "TradingView Advanced (Servatmandi)",
-    engineTvLight: "Lightweight Charts (Official Free)",
-    engineKlineDesc: "Lightweight with drawing tools, indicators & SQLite auto-save",
-    engineTvAdvDesc: "Official full TradingView interface with 80+ tools & indicators",
-    engineTvLightDesc: "Ultra-fast, minimal official TradingView engine",
+    chartSubtitle: "TradingView advanced interactive charting library powered by Nobitex market feed",
     timeframe: "Timeframe:",
     tf15m: "15m",
     tf30m: "30m",
@@ -487,14 +480,7 @@ export const TRANSLATIONS = {
 
     // Chart View
     chartTitle: "چارت تحلیل تکنیکال",
-    chartSubtitle: "نمودار شمعی تعاملی سبک TradingView با داده‌های زنده و رسمی صرافی نوبیتکس",
-    chartEngine: "موتور چارت:",
-    engineKline: "KLineCharts (فعلی)",
-    engineTvAdv: "TradingView کامل (روش ثروتمندی)",
-    engineTvLight: "Lightweight Charts (رایگان رسمی)",
-    engineKlineDesc: "سبک با ابزارهای رسم، اندیکاتورها و ذخیره در دیتابیس محلی",
-    engineTvAdvDesc: "اینترفیس رسمی و کامل تریدینگ‌ویو با بیش از ۸۰ ابزار تحلیلی",
-    engineTvLightDesc: "نسخه رسمی تریدینگ‌ویو با حداکثر سرعت و حداقل شلوغی",
+    chartSubtitle: "نمودار پیشرفته و رسمی TradingView با داده‌های زنده صرافی نوبیتکس",
     timeframe: "بازه زمانی:",
     tf15m: "۱۵دقیقه",
     tf30m: "۳۰دقیقه",
