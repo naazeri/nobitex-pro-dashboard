@@ -133,10 +133,14 @@ def api_get_markets():
 
 
 @app.get("/api/portfolio")
-def api_get_portfolio(since: Optional[str] = "2026-10-17"):
+def api_get_portfolio(
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    since: Optional[str] = None,
+):
     """
     Return spot portfolio analytics in USDT using Weighted Average Cost (WAC).
-    since: '2026-10-17' for active cycle (default), or 'all' for all valid history.
+    Optionally filter by from_date and to_date.
     """
     wallets = get_wallet_snapshots()
     prices = get_market_prices()
@@ -151,16 +155,20 @@ def api_get_portfolio(since: Optional[str] = "2026-10-17"):
         except Exception:
             pass
 
-    since_date = None if since == "all" else since
-    trades = get_all_crypto_trades_chronological(since_date=since_date)
-    portfolio = calculate_portfolio(trades, wallets, prices, since_date=since_date)
+    effective_from = from_date or (since if since and since != "all" else None)
+    trades = get_all_crypto_trades_chronological(from_date=effective_from, to_date=to_date)
+    portfolio = calculate_portfolio(trades, wallets, prices, from_date=effective_from, to_date=to_date)
     return portfolio
 
 
 @app.get("/api/portfolio/charts")
-def api_get_portfolio_charts(since: Optional[str] = "2026-10-17"):
+def api_get_portfolio_charts(
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    since: Optional[str] = None,
+):
     """Return chart data for Asset Allocation, PnL by Asset, and Timeline."""
-    portfolio = api_get_portfolio(since=since)
+    portfolio = api_get_portfolio(from_date=from_date, to_date=to_date, since=since)
     return portfolio.get("charts", {})
 
 
@@ -187,17 +195,20 @@ def api_get_positions():
 
 
 @app.get("/api/analytics/pnl-calendar")
-def api_get_pnl_calendar(since: Optional[str] = "all"):
+def api_get_pnl_calendar(
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    since: Optional[str] = None,
+):
     """
     Return daily PnL calendar breakdown and month statistics.
-    since: '2026-10-17' for active cycle or 'all' for all valid history.
     """
-    since_date = None if since == "all" else since
+    effective_from = from_date or (since if since and since != "all" else None)
     trades = get_all_crypto_trades_chronological(since_date=None)
     raw_positions = get_positions(status="past")
     prices = get_market_prices()
     positions = calculate_positions_summary(raw_positions, prices).get("past", [])
-    return calculate_daily_pnl_calendar(trades, positions, prices, since_date=since_date)
+    return calculate_daily_pnl_calendar(trades, positions, prices, from_date=effective_from, to_date=to_date)
 
 
 def sync_btc_history_if_needed():
@@ -231,8 +242,10 @@ def sync_btc_history_if_needed():
 
 @app.get("/api/analytics/equity-curve")
 def api_get_equity_curve(
-    timeframe: str = "cycle",  # '7d', '30d', '90d', 'cycle', 'all'
-    since: Optional[str] = "2026-10-17",
+    timeframe: str = "all",  # '7d', '30d', '90d', 'ytd', 'all', 'custom'
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    since: Optional[str] = None,
 ):
     """
     Return continuous daily equity curve, cumulative PnL, and Bitcoin benchmark comparison.
@@ -258,6 +271,8 @@ def api_get_equity_curve(
         wallets=wallets,
         market_prices=prices,
         btc_prices_map=btc_cache,
+        from_date=from_date,
+        to_date=to_date,
         since_date=since,
         timeframe=timeframe,
     )
@@ -271,6 +286,8 @@ def api_get_trades(
     market: Optional[str] = None,
     search: Optional[str] = None,
     tag: Optional[str] = None,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
     page: int = 1,
     page_size: int = 50,
     sort_by: str = "timestamp",
@@ -284,6 +301,8 @@ def api_get_trades(
         market=market,
         search=search,
         tag=tag,
+        from_date=from_date,
+        to_date=to_date,
         page=page,
         page_size=page_size,
         sort_by=sort_by,

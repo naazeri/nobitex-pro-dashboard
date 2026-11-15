@@ -260,27 +260,85 @@
     <!-- TAB 1: SPOT PORTFOLIO                      -->
     <!-- ========================================== -->
     <div v-show="activeTab === 'spot'" class="space-y-5">
-      <!-- Spot Trading Cycle Switcher Pill -->
-      <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm">
-        <div class="flex items-center gap-2 text-xs">
-          <span class="text-slate-400 font-medium">{{ t('cycleLabel') }}</span>
+      <!-- Spot Date Range Filter Bar -->
+      <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-3 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 shadow-sm">
+        <div class="flex flex-wrap items-center gap-2.5 text-xs">
+          <span class="text-slate-400 font-medium flex items-center gap-1.5">
+            <span>📅</span>
+            <span>{{ t('dateRangeLabel') }}</span>
+          </span>
+
+          <!-- Preset Buttons -->
           <div class="inline-flex rounded-lg bg-slate-950 p-1 border border-slate-800">
             <button 
-              @click="changeSpotPeriod('2026-10-17')" 
-              class="px-3 py-1 rounded-md text-xs font-semibold transition"
-              :class="spotPeriod === '2026-10-17' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'">
-              {{ t('cycleActive') }}
+              @click="setSpotDatePreset('all')" 
+              class="px-2.5 py-1 rounded-md text-xs font-semibold transition"
+              :class="spotDatePreset === 'all' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'">
+              {{ t('datePresetAll') }}
             </button>
             <button 
-              @click="changeSpotPeriod('all')" 
-              class="px-3 py-1 rounded-md text-xs font-semibold transition"
-              :class="spotPeriod === 'all' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'">
-              {{ t('cycleAll') }}
+              @click="setSpotDatePreset('30d')" 
+              class="px-2.5 py-1 rounded-md text-xs font-semibold transition"
+              :class="spotDatePreset === '30d' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'">
+              {{ t('datePreset30d') }}
+            </button>
+            <button 
+              @click="setSpotDatePreset('90d')" 
+              class="px-2.5 py-1 rounded-md text-xs font-semibold transition"
+              :class="spotDatePreset === '90d' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'">
+              {{ t('datePreset90d') }}
+            </button>
+            <button 
+              @click="setSpotDatePreset('ytd')" 
+              class="px-2.5 py-1 rounded-md text-xs font-semibold transition"
+              :class="spotDatePreset === 'ytd' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'">
+              {{ t('datePresetYtd') }}
+            </button>
+            <button 
+              @click="setSpotDatePreset('custom')" 
+              class="px-2.5 py-1 rounded-md text-xs font-semibold transition"
+              :class="spotDatePreset === 'custom' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'">
+              {{ t('datePresetCustom') }}
+            </button>
+          </div>
+
+          <!-- Date Inputs (From / To) -->
+          <div class="flex items-center gap-1.5 bg-slate-950 px-2.5 py-1 rounded-lg border border-slate-800 text-[11px]">
+            <span class="text-slate-500">{{ t('dateFrom') }}:</span>
+            <input 
+              type="date" 
+              v-model="spotDateFrom" 
+              @change="onDateRangeChange"
+              class="bg-transparent text-slate-200 border-none outline-none font-mono text-xs cursor-pointer focus:ring-0 p-0"
+              placeholder="YYYY-MM-DD"
+            />
+            <span class="text-slate-600">|</span>
+            <span class="text-slate-500">{{ t('dateTo') }}:</span>
+            <input 
+              type="date" 
+              v-model="spotDateTo" 
+              @change="onDateRangeChange"
+              class="bg-transparent text-slate-200 border-none outline-none font-mono text-xs cursor-pointer focus:ring-0 p-0"
+              placeholder="YYYY-MM-DD"
+            />
+            <!-- Clear Button if dates are set -->
+            <button 
+              v-if="spotDateFrom || spotDateTo || spotDatePreset !== 'all'"
+              @click="setSpotDatePreset('all')"
+              class="ml-1 text-slate-400 hover:text-rose-400 p-0.5 rounded transition"
+              :title="t('clearDateRange')">
+              ✕
             </button>
           </div>
         </div>
-        <div class="text-[11px] text-slate-400 font-mono">
-          {{ spotPeriod === '2026-10-17' ? t('cycleBtcEntry') : t('cycleZeroCost') }}
+
+        <div class="text-[11px] text-slate-400 font-mono flex items-center gap-2">
+          <span v-if="spotDatePreset === 'all'" class="text-slate-400">
+            {{ t('allTimeNotice') }} ({{ t('cycleZeroCost') }})
+          </span>
+          <span v-else class="text-cyan-400 font-medium">
+            {{ t('customRangeNotice') }}: {{ spotDateFrom || '...' }} ➔ {{ spotDateTo || '...' }}
+          </span>
         </div>
       </div>
 
@@ -3979,7 +4037,10 @@
       setup() {
         const currentLang = ref(localStorage.getItem('nob_lang') || 'en');
         const activeTab = ref('spot');
-        const spotPeriod = ref('2026-10-17'); // default active cycle
+        const spotDatePreset = ref('all'); // 'all', '30d', '90d', 'ytd', 'custom'
+        const spotDateFrom = ref('');
+        const spotDateTo = ref('');
+        const spotPeriod = ref('all'); // backward compatibility alias
 
         function applyLanguageSettings(lang) {
           const dir = TRANSLATIONS[lang]?.dir || 'ltr';
@@ -4014,9 +4075,64 @@
           }
         }
 
-        function changeSpotPeriod(period) {
-          spotPeriod.value = period;
+        function formatDateIso(d) {
+          const year = d.getFullYear();
+          const month = String(d.getMonth() + 1).padStart(2, '0');
+          const day = String(d.getDate()).padStart(2, '0');
+          return `${year}-${month}-${day}`;
+        }
+
+        function setSpotDatePreset(preset) {
+          spotDatePreset.value = preset;
+          const today = new Date();
+          if (preset === 'all') {
+            spotDateFrom.value = '';
+            spotDateTo.value = '';
+            spotPeriod.value = 'all';
+          } else if (preset === '30d') {
+            const d = new Date();
+            d.setDate(d.getDate() - 30);
+            spotDateFrom.value = formatDateIso(d);
+            spotDateTo.value = formatDateIso(today);
+            spotPeriod.value = spotDateFrom.value;
+          } else if (preset === '90d') {
+            const d = new Date();
+            d.setDate(d.getDate() - 90);
+            spotDateFrom.value = formatDateIso(d);
+            spotDateTo.value = formatDateIso(today);
+            spotPeriod.value = spotDateFrom.value;
+          } else if (preset === 'ytd') {
+            const d = new Date(today.getFullYear(), 0, 1);
+            spotDateFrom.value = formatDateIso(d);
+            spotDateTo.value = formatDateIso(today);
+            spotPeriod.value = spotDateFrom.value;
+          } else if (preset === 'custom') {
+            if (!spotDateTo.value) spotDateTo.value = formatDateIso(today);
+            spotPeriod.value = spotDateFrom.value || 'all';
+          }
+          pushUrlState();
           fetchPortfolio();
+          fetchEquityCurve();
+        }
+
+        function onDateRangeChange() {
+          spotDatePreset.value = 'custom';
+          spotPeriod.value = spotDateFrom.value || 'all';
+          pushUrlState();
+          fetchPortfolio();
+          fetchEquityCurve();
+        }
+
+        function changeSpotPeriod(period) {
+          if (period === 'all') {
+            setSpotDatePreset('all');
+          } else {
+            spotDateFrom.value = period;
+            spotDatePreset.value = 'custom';
+            spotPeriod.value = period;
+            pushUrlState();
+            fetchPortfolio();
+          }
         }
 
         // Open Orders states
@@ -4451,7 +4567,11 @@
 
         async function fetchPortfolio() {
           try {
-            const res = await fetch(`/api/portfolio?since=${spotPeriod.value}`);
+            const params = new URLSearchParams();
+            if (spotDateFrom.value) params.set('from_date', spotDateFrom.value);
+            if (spotDateTo.value) params.set('to_date', spotDateTo.value);
+            const queryStr = params.toString() ? `?${params.toString()}` : '';
+            const res = await fetch(`/api/portfolio${queryStr}`);
             const data = await res.json();
             summary.value = data.summary || summary.value;
             holdings.value = data.holdings || [];
@@ -4638,7 +4758,10 @@
           isEquityLoading.value = true;
           try {
             const tf = equityTimeframe.value;
-            const res = await fetch(`/api/analytics/equity-curve?timeframe=${tf}&since=${spotPeriod.value}`);
+            const params = new URLSearchParams({ timeframe: tf });
+            if (spotDateFrom.value) params.set('from_date', spotDateFrom.value);
+            if (spotDateTo.value) params.set('to_date', spotDateTo.value);
+            const res = await fetch(`/api/analytics/equity-curve?${params.toString()}`);
             const data = await res.json();
             equityData.value = data;
             nextTick(() => {
@@ -6358,6 +6481,14 @@
           if (['all', 'profit', 'loss', 'balance', 'dust'].includes(ss)) {
             holdingsFilter.status = ss;
           }
+          const fromParam = params.get('from');
+          const toParam = params.get('to');
+          if (fromParam || toParam) {
+            spotDateFrom.value = fromParam || '';
+            spotDateTo.value = toParam || '';
+            spotDatePreset.value = 'custom';
+            spotPeriod.value = spotDateFrom.value || 'all';
+          }
           const asset = params.get('asset');
           if (asset) {
             nextTick(() => {
@@ -6442,6 +6573,12 @@
             }
             if (holdingsFilter.search && holdingsFilter.search.trim()) {
               params.set('q', holdingsFilter.search.trim());
+            }
+            if (spotDateFrom.value) {
+              params.set('from', spotDateFrom.value);
+            }
+            if (spotDateTo.value) {
+              params.set('to', spotDateTo.value);
             }
           } else if (activeTab.value === 'trades') {
             if (filters.market) {
@@ -6565,6 +6702,11 @@
           t,
           activeTab,
           switchTab,
+          spotDatePreset,
+          spotDateFrom,
+          spotDateTo,
+          setSpotDatePreset,
+          onDateRangeChange,
           spotPeriod,
           changeSpotPeriod,
           trades,

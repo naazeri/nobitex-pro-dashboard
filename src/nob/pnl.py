@@ -27,6 +27,8 @@ def calculate_portfolio(
     trades: List[Dict[str, Any]],
     wallets: Optional[List[Dict[str, Any]]] = None,
     market_stats: Optional[Dict[str, Any]] = None,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
     since_date: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
@@ -38,16 +40,22 @@ def calculate_portfolio(
     - Fee Accounting:
       * BUY fees: converted from crypto to USDT using (fee * buy_price).
       * SELL fees: subtracted directly from sell revenue in USDT.
-    - Date filtering: optional since_date (e.g. '2026-10-17') for active trading cycle.
+    - Date filtering: optional from_date and to_date range filtering.
     """
     if wallets is None:
         wallets = []
     if market_stats is None:
         market_stats = {}
 
+    # Support legacy since_date as alias for from_date
+    effective_from = from_date or (since_date if since_date and since_date != "all" else None)
+
     # Filter trades by date if requested
-    if since_date:
-        trades = [t for t in trades if str(t.get("timestamp", "")) >= since_date]
+    if effective_from:
+        trades = [t for t in trades if str(t.get("timestamp", "")) >= effective_from]
+    if to_date:
+        to_cutoff = to_date if len(to_date) > 10 else f"{to_date} 23:59:59"
+        trades = [t for t in trades if str(t.get("timestamp", "")) <= to_cutoff]
 
     # Index wallets by uppercase currency
     wallet_map: Dict[str, Dict[str, Any]] = {}
@@ -338,7 +346,9 @@ def calculate_portfolio(
             "total_assets_count": len(holdings),
             "best_performer": best_performer,
             "worst_performer": worst_performer,
-            "since_date": since_date,
+            "from_date": effective_from,
+            "to_date": to_date,
+            "since_date": effective_from,
         },
         "holdings": sorted(
             list(holdings.values()),
@@ -620,12 +630,26 @@ def calculate_daily_pnl_calendar(
     trades: List[Dict[str, Any]],
     past_positions: List[Dict[str, Any]],
     market_stats: Optional[Dict[str, Any]] = None,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
     since_date: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Calculate daily realized PnL breakdown across Spot and Futures.
     Maps each trading day to its spot sells, futures closed positions, fees, volume, and net profit.
     """
+    effective_from = from_date or (since_date if since_date and since_date != "all" else None)
+    to_cutoff = to_date[:10] if to_date else None
+
+    def is_in_range(d: str) -> bool:
+        if not d:
+            return False
+        if effective_from and d < effective_from[:10]:
+            return False
+        if to_cutoff and d > to_cutoff:
+            return False
+        return True
+
     daily_stats: Dict[str, Dict[str, Any]] = defaultdict(lambda: {
         "date": "",
         "spot_pnl": 0.0,
@@ -672,7 +696,7 @@ def calculate_daily_pnl_calendar(
                 current_qty += net_amount
 
                 # Record buy volume and fee if within date range
-                if date_str and (not since_date or date_str >= since_date):
+                if is_in_range(date_str):
                     daily_stats[date_str]["date"] = date_str
                     daily_stats[date_str]["volume_usdt"] += total
                     daily_stats[date_str]["fees_usdt"] += fee_usdt
@@ -692,7 +716,7 @@ def calculate_daily_pnl_calendar(
                         current_qty = 0.0
                         avg_cost = 0.0
 
-                    if date_str and (not since_date or date_str >= since_date):
+                    if is_in_range(date_str):
                         daily_stats[date_str]["date"] = date_str
                         daily_stats[date_str]["spot_pnl"] += trade_pnl
                         daily_stats[date_str]["volume_usdt"] += total
@@ -713,7 +737,7 @@ def calculate_daily_pnl_calendar(
                         })
                 else:
                     # Unmatched sell
-                    if date_str and (not since_date or date_str >= since_date):
+                    if is_in_range(date_str):
                         daily_stats[date_str]["date"] = date_str
                         daily_stats[date_str]["volume_usdt"] += total
                         daily_stats[date_str]["fees_usdt"] += fee_usdt
@@ -722,10 +746,7 @@ def calculate_daily_pnl_calendar(
     for pos in past_positions:
         closed_at = str(pos.get("closed_at", "") or pos.get("opened_at", ""))
         date_str = to_tehran_date_str(closed_at)
-        if not date_str:
-            continue
-
-        if since_date and date_str < since_date:
+        if not is_in_range(date_str):
             continue
 
         pnl = float(pos.get("net_pnl", pos.get("pnl", pos.get("PNL", 0.0))) or 0.0)
@@ -846,8 +867,10 @@ def calculate_equity_curve(
     wallets: Optional[List[Dict[str, Any]]] = None,
     market_prices: Optional[Dict[str, Any]] = None,
     btc_prices_map: Optional[Dict[str, float]] = None,
-    since_date: Optional[str] = "2026-10-17",
-    timeframe: str = "cycle",  # '7d', '30d', '90d', 'cycle', 'all'
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    since_date: Optional[str] = None,
+    timeframe: str = "all",  # '7d', '30d', '90d', 'ytd', 'all', 'custom'
 ) -> Dict[str, Any]:
     """
     Calculate daily continuous equity curve, cumulative PnL, and Bitcoin benchmark comparison.
@@ -860,41 +883,48 @@ def calculate_equity_curve(
     if btc_prices_map is None:
         btc_prices_map = {}
 
+    effective_from = from_date or (since_date if since_date and since_date not in ("all", "cycle") else None)
+
     # 1. Calculate live portfolio value
-    port = calculate_portfolio(trades, wallets, market_prices, since_date=since_date)
+    port = calculate_portfolio(trades, wallets, market_prices, from_date=effective_from, to_date=to_date)
     current_portfolio_value = port.get("summary", {}).get("total_portfolio_value", 0.0)
 
     # 2. Get daily pnl breakdown (spot sells + futures closed positions)
-    daily_cal = calculate_daily_pnl_calendar(trades, past_positions, market_prices, since_date=None)
+    daily_cal = calculate_daily_pnl_calendar(trades, past_positions, market_prices, from_date=None, to_date=None)
     daily_stats = daily_cal.get("daily_stats", {})
 
-    # 3. Determine start and end date based on timeframe (Asia/Tehran date)
+    # 3. Determine start and end date based on timeframe or explicit date range (Asia/Tehran date)
     today = datetime.datetime.now(TEHRAN_TZ).date()
     end_date = today
 
-    if timeframe == "7d":
+    if to_date:
+        try:
+            end_date = datetime.date.fromisoformat(to_date[:10])
+        except ValueError:
+            end_date = today
+
+    if effective_from:
+        try:
+            start_date = datetime.date.fromisoformat(effective_from[:10])
+        except ValueError:
+            start_date = end_date - datetime.timedelta(days=29)
+    elif timeframe == "7d":
         start_date = end_date - datetime.timedelta(days=6)
     elif timeframe == "30d":
         start_date = end_date - datetime.timedelta(days=29)
     elif timeframe == "90d":
         start_date = end_date - datetime.timedelta(days=89)
-    elif timeframe == "all":
+    elif timeframe == "ytd":
+        start_date = datetime.date(end_date.year, 1, 1)
+    else:  # 'all' or default
         all_days = sorted(daily_stats.keys())
         if all_days:
             try:
                 start_date = datetime.date.fromisoformat(all_days[0])
             except ValueError:
-                start_date = datetime.date(2026, 2, 5)
+                start_date = end_date - datetime.timedelta(days=365)
         else:
-            start_date = datetime.date(2026, 2, 5)
-    else:  # 'cycle' or default
-        if since_date:
-            try:
-                start_date = datetime.date.fromisoformat(since_date)
-            except ValueError:
-                start_date = datetime.date(2026, 10, 17)
-        else:
-            start_date = datetime.date(2026, 10, 17)
+            start_date = end_date - datetime.timedelta(days=365)
 
     if start_date > end_date:
         start_date = end_date

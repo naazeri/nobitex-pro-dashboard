@@ -377,6 +377,8 @@ def get_trades(
     market: Optional[str] = None,
     search: Optional[str] = None,
     tag: Optional[str] = None,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
     page: int = 1,
     page_size: int = 50,
     sort_by: str = "timestamp",
@@ -419,6 +421,15 @@ def get_trades(
             "EXISTS (SELECT 1 FROM trade_journal tj WHERE tj.entry_type = 'trade' AND tj.target_id = trades.id AND tj.tags LIKE ?)"
         )
         params.append(tag_val)
+
+    if from_date:
+        conditions.append("timestamp >= ?")
+        params.append(from_date)
+
+    if to_date:
+        to_cutoff = to_date if len(to_date) > 10 else f"{to_date} 23:59:59"
+        conditions.append("timestamp <= ?")
+        params.append(to_cutoff)
 
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
@@ -638,6 +649,8 @@ def get_market_prices(db_path: Optional[Path] = None) -> Dict[str, Dict[str, Any
 
 def get_all_crypto_trades_chronological(
     since_date: Optional[str] = None,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
     trade_type: Optional[str] = "Spot",
     db_path: Optional[Path] = None,
 ) -> List[Dict[str, Any]]:
@@ -651,9 +664,15 @@ def get_all_crypto_trades_chronological(
         conditions.append("trade_type = ?")
         params.append(trade_type)
 
-    if since_date:
+    effective_from = from_date or since_date
+    if effective_from:
         conditions.append("timestamp >= ?")
-        params.append(since_date)
+        params.append(effective_from)
+
+    if to_date:
+        to_cutoff = to_date if len(to_date) > 10 else f"{to_date} 23:59:59"
+        conditions.append("timestamp <= ?")
+        params.append(to_cutoff)
 
     sql = f"""
         SELECT * FROM trades 

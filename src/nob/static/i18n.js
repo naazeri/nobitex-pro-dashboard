@@ -91,10 +91,18 @@ export const TRANSLATIONS = {
     drawingsSaved: "Drawings saved to database",
     viewChart: "View Chart",
 
-    // Spot Cycle Switcher
-    cycleLabel: "Trading Period:",
-    cycleActive: "Active Cycle (Since Oct 17, 2026)",
-    cycleAll: "All Valid History",
+    // Spot Date Range Filter & Presets
+    dateRangeLabel: "Date Range:",
+    datePresetAll: "All Time",
+    datePreset30d: "30D",
+    datePreset90d: "90D",
+    datePresetYtd: "YTD",
+    datePresetCustom: "Custom",
+    dateFrom: "From",
+    dateTo: "To",
+    clearDateRange: "Reset to All Time",
+    allTimeNotice: "Full Trading History",
+    customRangeNotice: "Filtered Date Range",
 
     // Spot KPI Cards
     kpiPortfolioValue: "Portfolio Value",
@@ -205,8 +213,7 @@ export const TRANSLATIONS = {
     kpiWinsLosses: "{wins} wins / {losses} losses",
     activeFilter: "Active Filter:",
     journalSelectedTags: "Selected tags:",
-    cycleBtcEntry: "BTC entry: $80,929.00 cycle",
-    cycleZeroCost: "Zero-cost sells ignored",
+    cycleZeroCost: "Zero-cost sells protected",
 
     // Liquidation Risk Radar
     radarTitle: "Liquidation Risk Radar",
@@ -504,10 +511,18 @@ export const TRANSLATIONS = {
     drawingsSaved: "تغییرات و خطوط در دیتابیس ذخیره شدند",
     viewChart: "مشاهده چارت",
 
-    // Spot Cycle Switcher
-    cycleLabel: "دوره معاملاتی:",
-    cycleActive: "چرخه جاری (از ۱۷ اکتبر ۲۰۲۶)",
-    cycleAll: "کل تاریخچه معتبر",
+    // Spot Date Range Filter & Presets
+    dateRangeLabel: "بازه زمانی:",
+    datePresetAll: "کل تاریخچه",
+    datePreset30d: "۳۰ روز",
+    datePreset90d: "۹۰ روز",
+    datePresetYtd: "از ابتدای سال",
+    datePresetCustom: "سفارشی",
+    dateFrom: "از تاریخ",
+    dateTo: "تا تاریخ",
+    clearDateRange: "نمایش کل تاریخچه",
+    allTimeNotice: "کل تاریخچه معاملات",
+    customRangeNotice: "بازه زمانی فیلترشده",
 
     // Spot KPI Cards
     kpiPortfolioValue: "ارزش پورتفولیو",
@@ -618,8 +633,7 @@ export const TRANSLATIONS = {
     kpiWinsLosses: "{wins} برد / {losses} باخت",
     activeFilter: "فیلتر فعال:",
     journalSelectedTags: "تگ‌های انتخابی:",
-    cycleBtcEntry: "چرخه ورود بیت‌کوین: ۸۰,۹۲۹ دلار",
-    cycleZeroCost: "فروش‌های بهای صفر نادیده گرفته شد",
+    cycleZeroCost: "محافظت از فروش‌های با بهای صفر",
 
     // Liquidation Risk Radar
     radarTitle: "رادار ریسک لیکوییدیشن",
