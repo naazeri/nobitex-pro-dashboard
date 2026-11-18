@@ -441,6 +441,7 @@ def get_trades(
         "type",
         "price",
         "amount",
+        "net_amount",
         "total",
         "fee",
         "timestamp",
@@ -461,7 +462,9 @@ def get_trades(
                 col_name = part.lower()
                 direction = "DESC" if sort_desc else "ASC"
 
-            if col_name in valid_sort_cols:
+            if col_name == "net_amount":
+                order_parts.append(f"(CASE WHEN LOWER(type) = 'buy' THEN (amount - fee) ELSE 0 END) {direction}")
+            elif col_name in valid_sort_cols:
                 order_parts.append(f"{col_name} {direction}")
 
     if not order_parts:
@@ -479,8 +482,12 @@ def get_trades(
         cursor.execute(count_sql, params)
         total_count = cursor.fetchone()[0]
 
-        # Data query
-        data_sql = f"SELECT * FROM trades {where_clause} {order_clause} LIMIT ? OFFSET ?"
+        # Data query with computed net_amount (amount - fee for buys)
+        data_sql = f"""
+            SELECT *, 
+                   CASE WHEN LOWER(type) = 'buy' THEN ROUND(MAX(0.0, amount - fee), 8) ELSE NULL END AS net_amount
+            FROM trades {where_clause} {order_clause} LIMIT ? OFFSET ?
+        """
         cursor.execute(data_sql, params + [page_size, offset])
         rows = [dict(row) for row in cursor.fetchall()]
 
@@ -675,7 +682,9 @@ def get_all_crypto_trades_chronological(
         params.append(to_cutoff)
 
     sql = f"""
-        SELECT * FROM trades 
+        SELECT *, 
+               CASE WHEN LOWER(type) = 'buy' THEN ROUND(MAX(0.0, amount - fee), 8) ELSE NULL END AS net_amount
+        FROM trades 
         WHERE {' AND '.join(conditions)}
         ORDER BY timestamp ASC
     """

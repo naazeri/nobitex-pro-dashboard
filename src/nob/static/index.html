@@ -2829,6 +2829,18 @@
                     <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
                   </div>
                 </th>
+                <th @click="toggleTradeSort('net_amount')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
+                  <div class="flex items-center gap-1.5">
+                    <span class="text-emerald-400 font-semibold">{{ t('colNetAmount') }}</span>
+                    <span v-if="getSortInfo(tradeSorts, 'net_amount')" class="inline-flex items-center text-blue-400 font-bold font-mono">
+                      <span>{{ getSortInfo(tradeSorts, 'net_amount').dir === 'asc' ? '▲' : '▼' }}</span>
+                      <span v-if="getSortInfo(tradeSorts, 'net_amount').isMulti" class="text-[10px] ml-0.5 bg-blue-500/20 px-1 py-0.2 rounded-full border border-blue-500/30">
+                        {{ getSortInfo(tradeSorts, 'net_amount').priority }}
+                      </span>
+                    </span>
+                    <span v-else class="text-slate-600 opacity-0 group-hover:opacity-100 transition">↕</span>
+                  </div>
+                </th>
                 <th @click="toggleTradeSort('total')" :title="t('sortTooltip')" class="py-3 px-4 cursor-pointer hover:bg-slate-800/80 transition group whitespace-nowrap">
                   <div class="flex items-center gap-1.5">
                     <span>{{ t('colTotal') }}</span>
@@ -2858,10 +2870,10 @@
             </thead>
             <tbody class="divide-y divide-slate-800/60 font-mono text-xs sm:text-sm">
               <tr v-if="loading" class="animate-pulse">
-                <td colspan="11" class="py-12 text-center text-slate-400">{{ t('loadingData') }}</td>
+                <td colspan="12" class="py-12 text-center text-slate-400">{{ t('loadingData') }}</td>
               </tr>
               <tr v-else-if="trades.length === 0">
-                <td colspan="11" class="py-12 text-center text-slate-400">{{ t('noTradesFound') }}</td>
+                <td colspan="12" class="py-12 text-center text-slate-400">{{ t('noTradesFound') }}</td>
               </tr>
               <tr v-for="trade in trades" :key="trade.id" class="hover:bg-slate-800/40 transition">
                 <td class="py-3 px-4 text-slate-400 whitespace-nowrap">{{ trade.id }}</td>
@@ -2885,6 +2897,10 @@
                 <td class="py-3 px-4 text-slate-400 whitespace-nowrap">{{ formatTimestamp(trade.timestamp) }}</td>
                 <td class="py-3 px-4 text-slate-200 whitespace-nowrap"><span class="bidi-num">{{ formatTradePrice(trade.price, trade.market) }}</span></td>
                 <td class="py-3 px-4 font-medium text-slate-100 whitespace-nowrap"><span class="bidi-num">{{ formatAmount(trade.amount) }}</span></td>
+                <td class="py-3 px-4 font-semibold whitespace-nowrap">
+                  <span v-if="trade.type === 'buy'" class="text-emerald-400 bidi-num">{{ formatNetAmount(trade) }}</span>
+                  <span v-else class="text-slate-600">—</span>
+                </td>
                 <td class="py-3 px-4 font-bold text-slate-200 whitespace-nowrap"><span class="bidi-num">{{ formatTradeTotal(trade.total, trade.market) }}</span></td>
                 <td class="py-3 px-4 text-slate-400 whitespace-nowrap"><span class="bidi-num">{{ formatTradeFee(trade.fee, trade.market, trade.type, trade.src_currency) }}</span></td>
                 <td class="py-3 px-4 text-center whitespace-nowrap">
@@ -3999,6 +4015,7 @@
                     <th class="py-2 px-3 text-center">{{ t('colType') }}</th>
                     <th class="py-2 px-3 text-right">{{ t('colPrice') }}</th>
                     <th class="py-2 px-3 text-right">{{ t('colAmount') }}</th>
+                    <th class="py-2 px-3 text-right text-emerald-400 font-semibold">{{ t('colNetAmount') }}</th>
                     <th class="py-2 px-3 text-right">{{ t('colTotal') }}</th>
                     <th class="py-2 px-3 text-right">{{ t('colFee') }}</th>
                   </tr>
@@ -4013,6 +4030,10 @@
                     </td>
                     <td class="py-2 px-3 text-right text-white font-bold whitespace-nowrap"><span class="bidi-num">${{ formatNumber(tr.price) }}</span></td>
                     <td class="py-2 px-3 text-right text-slate-300 whitespace-nowrap"><span class="bidi-num">{{ formatAmount(tr.amount) }}</span></td>
+                    <td class="py-2 px-3 text-right whitespace-nowrap">
+                      <span v-if="tr.type === 'buy'" class="text-emerald-400 font-semibold bidi-num">{{ formatNetAmount(tr) }}</span>
+                      <span v-else class="text-slate-600">—</span>
+                    </td>
                     <td class="py-2 px-3 text-right font-bold text-slate-200 whitespace-nowrap"><span class="bidi-num">${{ formatCurrency(tr.total) }}</span></td>
                     <td class="py-2 px-3 text-right text-slate-400 text-[11px] whitespace-nowrap"><span class="bidi-num">{{ formatAmount(tr.fee) }}</span></td>
                   </tr>
@@ -5072,10 +5093,20 @@
           return num.toLocaleString('en-US', { maximumFractionDigits: 4 });
         }
 
-        function formatAmount(val) {
+        function formatAmount(val, maxDecimals = 8) {
           const num = parseFloat(val);
           if (isNaN(num)) return val;
-          return num.toLocaleString('en-US', { maximumFractionDigits: 6 });
+          return num.toLocaleString('en-US', { maximumFractionDigits: maxDecimals });
+        }
+
+        function formatNetAmount(tr) {
+          if (!tr || tr.type !== 'buy') return '—';
+          if (tr.net_amount !== undefined && tr.net_amount !== null && !isNaN(parseFloat(tr.net_amount))) {
+            return formatAmount(tr.net_amount);
+          }
+          const amt = parseFloat(tr.amount) || 0;
+          const fee = parseFloat(tr.fee) || 0;
+          return formatAmount(Math.max(0, amt - fee));
         }
 
         function formatTimestamp(raw) {
@@ -6755,6 +6786,7 @@
           formatSignedPercent,
           formatNumber,
           formatAmount,
+          formatNetAmount,
           formatTimestamp,
           formatMarket,
           formatCurrencyName,

@@ -506,6 +506,7 @@ def api_export_csv(
         "timestamp",
         "price_usdt",
         "amount",
+        "net_amount",
         "total_usdt",
         "fee",
         "src_currency",
@@ -519,6 +520,7 @@ def api_export_csv(
         row = dict(t)
         row["price_usdt"] = row.get("price")
         row["total_usdt"] = row.get("total")
+        row["net_amount"] = row.get("net_amount") if row.get("net_amount") is not None else ""
 
         raw_ts = str(row.get("timestamp", ""))
         try:
