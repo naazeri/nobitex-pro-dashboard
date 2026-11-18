@@ -4059,12 +4059,18 @@
 
     createApp({
       setup() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const initialTab = urlParams.get('tab');
+        const initialSym = urlParams.get('symbol') || urlParams.get('sym');
+        const initialFrom = urlParams.get('from');
+        const initialTo = urlParams.get('to');
+
         const currentLang = ref(localStorage.getItem('nob_lang') || 'en');
-        const activeTab = ref('spot');
-        const spotDatePreset = ref('all'); // 'all', '30d', '90d', 'ytd', 'custom'
-        const spotDateFrom = ref('');
-        const spotDateTo = ref('');
-        const spotPeriod = ref('all'); // backward compatibility alias
+        const activeTab = ref(['spot', 'margin', 'orders', 'chart', 'calendar', 'trades'].includes(initialTab) ? initialTab : 'spot');
+        const spotDatePreset = ref((initialFrom || initialTo) ? 'custom' : 'all');
+        const spotDateFrom = ref(initialFrom || '');
+        const spotDateTo = ref(initialTo || '');
+        const spotPeriod = ref(initialFrom || 'all'); // backward compatibility alias
 
         function applyLanguageSettings(lang) {
           const dir = TRANSLATIONS[lang]?.dir || 'ltr';
@@ -4093,6 +4099,13 @@
           } else if (tab === 'chart') {
             nextTick(() => {
               initTradingViewChart();
+              if (tvWidgetInstance && isTvChartReady && tvWidgetInstance.activeChart) {
+                try {
+                  if (tvWidgetInstance.activeChart().symbol() !== chartSymbol.value) {
+                    tvWidgetInstance.activeChart().setSymbol(chartSymbol.value);
+                  }
+                } catch (e) {}
+              }
             });
           } else if (tab === 'orders') {
             fetchOpenOrders();
@@ -6145,14 +6158,15 @@
         // ==========================================
         // ADVANCED PRICE CHART (TradingView)
         // ==========================================
-        const chartSymbol = ref('BTCUSDT');
-        const chartTimeframe = ref('1D'); // '15m', '30m', '1h', '4h', '1D', '1W'
+        const chartSymbol = ref((initialSym ? initialSym.toUpperCase() : null) || 'BTCUSDT');
+        const chartTimeframe = ref(urlParams.get('tf') || urlParams.get('timeframe') || '1D');
         const chartSymbols = ref([]);
         const chartSearchQuery = ref('');
         const chartIsSearchOpen = ref(false);
         const chartLoading = ref(false);
         const chartRestricted = ref(false);
         let tvWidgetInstance = null;
+        let isTvChartReady = false;
 
         const currentChartSymbolInfo = computed(() => {
           return chartSymbols.value.find(s => s.symbol === chartSymbol.value) || {
@@ -6230,7 +6244,7 @@
         async function selectChartSymbol(symbol) {
           chartSymbol.value = symbol;
           chartIsSearchOpen.value = false;
-          if (tvWidgetInstance && tvWidgetInstance.activeChart) {
+          if (tvWidgetInstance && isTvChartReady && tvWidgetInstance.activeChart) {
             try {
               tvWidgetInstance.activeChart().setSymbol(symbol);
             } catch (e) {
@@ -6241,7 +6255,7 @@
 
         async function selectChartTimeframe(tf) {
           chartTimeframe.value = tf;
-          if (tvWidgetInstance && tvWidgetInstance.activeChart) {
+          if (tvWidgetInstance && isTvChartReady && tvWidgetInstance.activeChart) {
             const res = getResolutionForTimeframe(tf);
             try {
               tvWidgetInstance.activeChart().setResolution(res);
@@ -6252,6 +6266,7 @@
         }
 
         function openChartForSymbol(sym) {
+          chartSymbol.value = sym;
           activeTab.value = 'chart';
           nextTick(async () => {
             initTradingViewChart();
@@ -6397,6 +6412,15 @@
             return;
           }
           if (tvWidgetInstance) {
+            if (isTvChartReady && tvWidgetInstance.activeChart) {
+              try {
+                if (tvWidgetInstance.activeChart().symbol() !== chartSymbol.value) {
+                  tvWidgetInstance.activeChart().setSymbol(chartSymbol.value);
+                }
+              } catch (e) {
+                console.warn('Error setting symbol on existing TradingView widget:', e);
+              }
+            }
             return;
           }
           const dom = document.getElementById('tv-chart-container');
@@ -6423,8 +6447,11 @@
             symbol_search_request_delay: 500,
             datafeed: tvDatafeed,
             drawings_access: { type: 'black', tools: [] },
+            load_last_chart: false,
+            auto_save_delay: 0,
             disabled_features: [
               'use_localstorage_for_settings',
+              'save_chart_properties_to_local_storage',
             ],
             enabled_features: [
               'study_templates',
@@ -6440,6 +6467,18 @@
                   return date.toLocaleDateString('en-US');
                 }
               }
+            }
+          });
+
+          tvWidgetInstance.onChartReady(() => {
+            isTvChartReady = true;
+            try {
+              const activeChart = tvWidgetInstance.activeChart();
+              if (activeChart && chartSymbol.value && activeChart.symbol() !== chartSymbol.value) {
+                activeChart.setSymbol(chartSymbol.value);
+              }
+            } catch (e) {
+              console.warn('TradingView onChartReady sync warning:', e);
             }
           });
         }
@@ -6461,11 +6500,27 @@
           // 2. Chart states
           const sym = params.get('symbol') || params.get('sym');
           if (sym) {
-            chartSymbol.value = sym.toUpperCase();
+            const cleanSym = sym.toUpperCase();
+            chartSymbol.value = cleanSym;
+            if (tvWidgetInstance && isTvChartReady && tvWidgetInstance.activeChart) {
+              try {
+                if (tvWidgetInstance.activeChart().symbol() !== cleanSym) {
+                  tvWidgetInstance.activeChart().setSymbol(cleanSym);
+                }
+              } catch (e) {}
+            }
           }
           const tf = params.get('tf') || params.get('timeframe');
           if (tf && ['15m', '30m', '1h', '4h', '1D', '1W'].includes(tf)) {
             chartTimeframe.value = tf;
+            if (tvWidgetInstance && isTvChartReady && tvWidgetInstance.activeChart) {
+              const res = getResolutionForTimeframe(tf);
+              try {
+                if (tvWidgetInstance.activeChart().resolution() !== res) {
+                  tvWidgetInstance.activeChart().setResolution(res);
+                }
+              } catch (e) {}
+            }
           }
 
           // 3. Calendar states
@@ -6667,6 +6722,32 @@
           { flush: 'post' }
         );
 
+        // Keep TradingView instance in sync whenever chartSymbol or chartTimeframe changes
+        watch(chartSymbol, (newSym) => {
+          if (newSym && tvWidgetInstance && isTvChartReady && tvWidgetInstance.activeChart) {
+            try {
+              if (tvWidgetInstance.activeChart().symbol() !== newSym) {
+                tvWidgetInstance.activeChart().setSymbol(newSym);
+              }
+            } catch (e) {
+              console.warn('TradingView setSymbol watcher error:', e);
+            }
+          }
+        });
+
+        watch(chartTimeframe, (newTf) => {
+          if (newTf && tvWidgetInstance && isTvChartReady && tvWidgetInstance.activeChart) {
+            const res = getResolutionForTimeframe(newTf);
+            try {
+              if (tvWidgetInstance.activeChart().resolution() !== res) {
+                tvWidgetInstance.activeChart().setResolution(res);
+              }
+            } catch (e) {
+              console.warn('TradingView setResolution watcher error:', e);
+            }
+          }
+        });
+
         // Handle Browser Forward / Back Navigation
         window.addEventListener('popstate', () => {
           isSyncingUrl = true;
@@ -6675,6 +6756,13 @@
             if (activeTab.value === 'chart') {
               nextTick(() => {
                 initTradingViewChart();
+                if (tvWidgetInstance && isTvChartReady && tvWidgetInstance.activeChart) {
+                  try {
+                    if (tvWidgetInstance.activeChart().symbol() !== chartSymbol.value) {
+                      tvWidgetInstance.activeChart().setSymbol(chartSymbol.value);
+                    }
+                  } catch (e) {}
+                }
               });
             } else if (activeTab.value === 'spot') {
               nextTick(() => renderCharts());
