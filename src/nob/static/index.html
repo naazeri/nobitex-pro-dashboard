@@ -17,6 +17,9 @@
       darkMode: 'class',
       theme: {
         extend: {
+          maxWidth: {
+            '8xl': '1920px',
+          },
           colors: {
             brand: {
               50: '#eff6ff',
@@ -134,7 +137,7 @@
 </head>
 
 <body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col selection:bg-blue-600 selection:text-white">
-  <div id="app" v-cloak class="flex-1 flex flex-col max-w-7xl w-full mx-auto p-3 sm:p-5 lg:p-7 space-y-5">
+  <div id="app" v-cloak class="flex-1 flex flex-col max-w-[1920px] w-full mx-auto p-3 sm:p-5 lg:p-7 space-y-5">
 
     <!-- Top Navigation Header -->
     <header class="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 pb-4 border-b border-slate-800/80">
@@ -3804,7 +3807,7 @@
       class="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5"
       @click.self="closeAssetDetailsModal">
       
-      <div class="relative bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl max-w-4xl w-full text-slate-100 flex flex-col max-h-[92vh] overflow-hidden" :dir="currentLang === 'fa' ? 'rtl' : 'ltr'">
+      <div class="relative bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl max-w-5xl w-full text-slate-100 flex flex-col max-h-[92vh] overflow-hidden" :dir="currentLang === 'fa' ? 'rtl' : 'ltr'">
         
         <!-- Modal Header -->
         <div class="px-5 py-4 border-b border-slate-800 bg-slate-950/70 flex items-center justify-between">
