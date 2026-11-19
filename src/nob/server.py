@@ -4,13 +4,15 @@ import time
 import urllib.request
 import json
 import webbrowser
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime, timezone, timedelta
 from collections import defaultdict
-import zoneinfo
 
-TEHRAN_TZ = zoneinfo.ZoneInfo("Asia/Tehran")
+from nob.time_utils import IRST, now_irst, today_irst_str, ts_to_irst_date_str
+
+TEHRAN_TZ = IRST
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Response
@@ -60,7 +62,13 @@ from nob.pnl import (
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
-app = FastAPI(title="Nobitex Portfolio & Trades", version="2.1.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    yield
+
+
+app = FastAPI(title="Nobitex Portfolio & Trades", version="2.1.0", lifespan=lifespan)
 
 # Global sync status
 sync_status = {
@@ -69,11 +77,6 @@ sync_status = {
     "last_error": None,
     "step": None,
 }
-
-
-@app.on_event("startup")
-def startup_event():
-    init_db()
 
 
 @app.get("/api/stats")
@@ -232,7 +235,7 @@ def sync_btc_history_if_needed():
                 closes = data.get("c", [])
                 records = []
                 for ts, c in zip(timestamps, closes):
-                    d_str = datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
+                    d_str = ts_to_irst_date_str(ts)
                     records.append({"date": d_str, "close_price": float(c)})
                 if records:
                     upsert_btc_daily_history(records)
@@ -252,7 +255,7 @@ def api_get_equity_curve(
     """
     try:
         btc_cache = get_btc_daily_history()
-        today_str = datetime.now().strftime("%Y-%m-%d")
+        today_str = today_irst_str()
         if not btc_cache or today_str not in btc_cache:
             sync_btc_history_if_needed()
             btc_cache = get_btc_daily_history()
@@ -465,7 +468,7 @@ def api_refresh_prices():
         return {
             "status": "ok",
             "updated_count": count,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": now_irst().isoformat(),
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}

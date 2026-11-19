@@ -1,12 +1,17 @@
 import json
 import sqlite3
-from datetime import datetime
+import threading
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
+
+from nob.time_utils import now_irst
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_ROOT / "data"
 DEFAULT_DB_PATH = DATA_DIR / "portfolio.db"
+
+_initialized_dbs: set[Path] = set()
+_init_db_lock = threading.Lock()
 
 EXCLUDED_MARKETS = {
     "USDT-RLS",
@@ -26,13 +31,28 @@ def get_db_connection(db_path: Optional[Path] = None) -> sqlite3.Connection:
     if db_path is None:
         db_path = DEFAULT_DB_PATH
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path))
+    conn = sqlite3.connect(str(db_path), timeout=30.0)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout=30000;")
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA synchronous=NORMAL;")
     return conn
 
 
-def init_db(db_path: Optional[Path] = None):
-    """Initialize SQLite tables and indexes."""
+def init_db(db_path: Optional[Path] = None, force: bool = False):
+    """Initialize SQLite tables and indexes (idempotent, guarded once per DB path)."""
+    resolved = (db_path or DEFAULT_DB_PATH).resolve()
+    if not force and resolved in _initialized_dbs and resolved.exists():
+        return
+    with _init_db_lock:
+        if not force and resolved in _initialized_dbs and resolved.exists():
+            return
+        _init_db_schema(db_path)
+        _initialized_dbs.add(resolved)
+
+
+def _init_db_schema(db_path: Optional[Path] = None):
+    """Execute SQLite DDL and additive schema migrations."""
     with get_db_connection(db_path) as conn:
         cursor = conn.cursor()
 
@@ -193,7 +213,7 @@ def upsert_orders(orders: List[Dict[str, Any]], db_path: Optional[Path] = None) 
         return 0
     init_db(db_path)
     count = 0
-    now_str = datetime.now().isoformat()
+    now_str = now_irst().isoformat()
     with get_db_connection(db_path) as conn:
         cursor = conn.cursor()
         for o in orders:
@@ -273,7 +293,7 @@ def update_order_status(order_id: int, status: str, db_path: Optional[Path] = No
     init_db(db_path)
     with get_db_connection(db_path) as conn:
         cursor = conn.cursor()
-        now_str = datetime.now().isoformat()
+        now_str = now_irst().isoformat()
         cursor.execute(
             "UPDATE orders SET status = ?, updated_at = ? WHERE id = ?",
             (status, now_str, order_id),
@@ -337,10 +357,25 @@ def upsert_trades(
 
             cursor.execute(
                 """
-                INSERT OR REPLACE INTO trades (
+                INSERT INTO trades (
                     id, order_id, market, src_currency, dst_currency,
                     type, price, amount, total, fee, timestamp, trade_type
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    order_id = excluded.order_id,
+                    market = excluded.market,
+                    src_currency = excluded.src_currency,
+                    dst_currency = excluded.dst_currency,
+                    type = excluded.type,
+                    price = excluded.price,
+                    amount = excluded.amount,
+                    total = excluded.total,
+                    fee = excluded.fee,
+                    timestamp = excluded.timestamp,
+                    trade_type = CASE
+                        WHEN excluded.trade_type = 'Margin' THEN 'Margin'
+                        ELSE COALESCE(trades.trade_type, excluded.trade_type)
+                    END
                 """,
                 (
                     trade_id,
@@ -360,7 +395,7 @@ def upsert_trades(
             count += 1
 
         # Record last sync time
-        now_str = datetime.now().isoformat()
+        now_str = now_irst().isoformat()
         cursor.execute(
             "INSERT OR REPLACE INTO metadata (key, value) VALUES ('last_sync', ?)",
             (now_str,),
@@ -570,7 +605,7 @@ def upsert_wallet_snapshots(wallets: List[Dict[str, Any]], db_path: Optional[Pat
         return 0
     init_db(db_path)
     count = 0
-    now_str = datetime.now().isoformat()
+    now_str = now_irst().isoformat()
     with get_db_connection(db_path) as conn:
         cursor = conn.cursor()
         for w in wallets:
@@ -610,7 +645,7 @@ def upsert_market_prices(prices: Dict[str, Any], db_path: Optional[Path] = None)
         return 0
     init_db(db_path)
     count = 0
-    now_str = datetime.now().isoformat()
+    now_str = now_irst().isoformat()
     with get_db_connection(db_path) as conn:
         cursor = conn.cursor()
         for market, data in prices.items():
@@ -709,7 +744,7 @@ def upsert_positions(positions: List[Dict[str, Any]], db_path: Optional[Path] = 
         return 0
     init_db(db_path)
     count = 0
-    now_str = datetime.now().isoformat()
+    now_str = now_irst().isoformat()
     with get_db_connection(db_path) as conn:
         cursor = conn.cursor()
         for p in positions:
@@ -832,7 +867,7 @@ def upsert_btc_daily_history(
         return 0
     init_db(db_path)
     count = 0
-    now_str = datetime.now().isoformat()
+    now_str = now_irst().isoformat()
     with get_db_connection(db_path) as conn:
         cursor = conn.cursor()
         for r in records:
@@ -894,7 +929,7 @@ def upsert_journal_entry(
     if tags is None:
         tags = []
     tags_json = json.dumps(tags, ensure_ascii=False)
-    now_str = datetime.now().isoformat()
+    now_str = now_irst().isoformat()
     trade_id = target_id if entry_type == "trade" else None
     position_id = target_id if entry_type == "position" else None
 
@@ -1058,7 +1093,7 @@ def save_chart_state(
     overlays_json = json.dumps(overlays or [])
     indicators_json = json.dumps(indicators or ["VOL"])
     tf = timeframe or "1D"
-    now_str = datetime.now().isoformat()
+    now_str = now_irst().isoformat()
 
     with get_db_connection(db_path) as conn:
         cursor = conn.cursor()

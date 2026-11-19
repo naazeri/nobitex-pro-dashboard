@@ -1,26 +1,15 @@
 import datetime
-import zoneinfo
 from typing import List, Dict, Any, Optional
 from collections import defaultdict
 
-TEHRAN_TZ = zoneinfo.ZoneInfo("Asia/Tehran")
+from nob.time_utils import IRST, iso_to_irst_date_str
+
+TEHRAN_TZ = IRST
 
 
 def to_tehran_date_str(timestamp_str: str) -> str:
-    """Convert UTC ISO timestamp to YYYY-MM-DD in Asia/Tehran timezone.
-    Correctly accounts for Iran Standard Time (UTC+03:30, no DST changes since September 2022).
-    """
-    if not timestamp_str or len(timestamp_str) < 10:
-        return ""
-    try:
-        clean_ts = timestamp_str.replace("Z", "+00:00")
-        dt = datetime.datetime.fromisoformat(clean_ts)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=datetime.timezone.utc)
-        dt_tehran = dt.astimezone(TEHRAN_TZ)
-        return dt_tehran.strftime("%Y-%m-%d")
-    except Exception:
-        return timestamp_str[:10]
+    """Convert UTC ISO timestamp to YYYY-MM-DD in IRST (UTC+03:30, no DST)."""
+    return iso_to_irst_date_str(timestamp_str)
 
 
 def calculate_portfolio(
