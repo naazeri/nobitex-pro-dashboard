@@ -1,0 +1,165 @@
+# Architectural & Product Decision Log (ADR) 🏛️
+# دفترچه تصمیمات معماری و محصول پروژه nob-api
+
+این سند شامل تمامی تصمیمات کلیدی، معماری، فرمول‌های مالی و طراحی رابط کاربری است که در طول توسعه پروژه اتخاذ شده است. هدف از ثبت این تصمیمات، جلوگیری از فراموشی دلایل فنی و عدم بازگشت به اشتباهات یا حالات قبلی است.
+
+This document records the key architectural, financial, and UX decisions made throughout the evolution of **nob-api**. Future maintainers and contributors must consult this log before proposing modifications to these core areas.
+
+---
+
+## فهرست تصمیمات / Table of Decisions
+
+1. [ADR-001: حذف فیلتر تاریخ ثابت (17 Oct) و جایگزینی با بازه زمانی اختیاری](#adr-001-removal-of-hardcoded-17-oct-cutoff-date)
+2. [ADR-002: ستون مقدار خالص خرید (Net Amount = Amount - Fee)](#adr-002-net-amount-column-calculation-for-buy-trades)
+3. [ADR-003: محاسبه سود/زیان واقعی خالص (True Net PnL)](#adr-003-true-net-pnl-after-all-fees-and-pool-share)
+4. [ADR-004: استفاده انحصاری و آفلاین از موتور چارت TradingView Advanced](#adr-004-offline-tradingview-advanced-charting-library)
+5. [ADR-005: رفع بازنشانی خودکار نماد چارت و مهار LocalStorage تردینگ‌ویو](#adr-005-tradingview-symbol-url-sync-and-localstorage-isolation)
+6. [ADR-006: رفع فریز تایم‌فریم هفتگی (1W) و خاتمه صفحه‌بندی تاریخچه کندل‌ها](#adr-006-1w-timeframe-resolution-and-pagination-loop-termination)
+7. [ADR-007: طراحی متناسب با مانیتورهای عریض (حداکثر عرض ۱۹۲۰ پیکسل)](#adr-007-widescreen-layout-optimization-max-w-1920px)
+8. [ADR-008: همگام‌سازی کامل وضعیت رابط کاربری با پارامترهای URL (Deep Linking)](#adr-008-bidirectional-url-state-synchronization)
+9. [ADR-009: ماژول سفارشات باز نوبیتکس با قابلیت لغو مستقیم](#adr-009-open-orders-tab-with-in-app-cancellation)
+10. [ADR-010: استاندارد منطقه زمانی ایران (IRST / UTC+03:30 بدون DST)](#adr-010-strict-iran-standard-time-utc0330-no-dst)
+11. [ADR-011: ایزولاسیون اعداد دوجهته (BiDi) و اجبار LTR در بوم‌های نقاشی Canvas 2D](#adr-011-bidi-numerical-isolation-and-canvas-2d-ltr-override)
+12. [ADR-012: اصل حریم خصوصی ۱۰۰٪ آفلاین و عدم وابستگی به اینترنت یا CDN](#adr-012-offline-first-architecture-and-zero-external-telemetry)
+
+---
+
+### ADR-001: Removal of Hardcoded 17 Oct Cutoff Date
+### حذف فیلتر تاریخ ثابت (17 Oct) و جایگزینی با بازه زمانی اختیاری
+
+- **وضعیت / Status:** پذیرفته شده و نهایی (Accepted & Enforced)
+- **زمینه و مشکل (Context):** در نسخه‌های ابتدایی، برای رفع مغایرت بهای تمام شده در معاملات قدیمی، تاریخ ثابت `2026-10-17` در کوئری‌های SQL و توابع سود/زیان هاردکد شده بود. این کار در یک پروژه متن‌باز (Open Source) اشتباه بزرگی است زیرا معاملات قبلی سایر کاربران نادیده گرفته می‌شد و با گذشت زمان تاریخ منسوخ می‌گردید.
+- **تصمیم اتخاذ شده (Decision):** فیلتر تاریخ ثابت `2026-10-17` به‌طور کامل از فایل‌های `src/nob/db.py`، `src/nob/pnl.py`، `src/nob/server.py` و رابط کاربری حذف گردید. به جای آن، یک نوار فیلتر بازه زمانی مدرن با پریست‌های سریع (`All Time`, `30D`, `90D`, `YTD`, `Custom`)، اینپوت‌های تقویمی و دکمه بازنشانی (`✕`) تعبیه شد که پارامترهای آن در URL به صورت `?from=YYYY-MM-DD&to=YYYY-MM-DD` ذخیره می‌شوند.
+- **⛔ هشدار - بازنگردید (DO NOT REVERT):** هیچ‌گاه تاریخ ثابت یا هاردکد شده را به کوئری‌های دیتابیس یا محاسبات مالی اضافه نکنید. هرگونه فیلتر باید اختیاری و به صورت پارامتریک از سمت کاربر اعمال شود.
+
+---
+
+### ADR-002: Net Amount Column Calculation for Buy Trades
+### ستون مقدار خالص خرید (Net Amount = Amount - Fee)
+
+- **وضعیت / Status:** پذیرفته شده و نهایی (Accepted & Enforced)
+- **زمینه و مشکل (Context):** در صرافی نوبیتکس، کارمزد معاملات خرید اسپات از همان دارایی رمزارز خریداری‌شده کسر می‌گردد (مثلاً در خرید ۱۰ ریپل با کارمزد ۰.۰۰۸ ریپل، عملاً ۹.۹۹۲ ریپل به کیف پول اضافه می‌شود). کاربران به ستونی نیاز داشتند که مقدار دقیق و خالص اضافه‌شده به دارایی را نشان دهد.
+- **تصمیم اتخاذ شده (Decision):** در کوئری SQL در `src/nob/db.py` و خروجی CSV در `src/nob/server.py`، فیلد `net_amount` به شرح زیر فرموله شد:
+  ```sql
+  CASE 
+    WHEN type = 'buy' THEN ROUND(MAX(0.0, amount - fee), 8) 
+    ELSE NULL 
+  END AS net_amount
+  ```
+- **چرا برای سفارشات فروش، خط تیره (NULL) نمایش داده می‌شود؟**
+  در معاملات فروش، کاربر رمزارز را می‌فروشد تا تتر یا ریال دریافت کند؛ مقدار رمزارز کسر شده از کیف پول همان `amount` کامل است و کارمزد از وجه دریافتی (تتر/تومان) کسر می‌گردد. بنابراین تفریق کارمزد از حجم در سفارش فروش از نظر ریاضی و حسابداری غلط است.
+- **⛔ هشدار - بازنگردید (DO NOT REVERT):** ستون Net Amount برای فروش‌ها باید همواره خط تیره (`—`) باشد. سعی نکنید برای فروش‌ها کارمزد را از حجم کم کنید.
+
+---
+
+### ADR-003: True Net PnL After All Fees and Pool Share
+### محاسبه سود/زیان واقعی خالص (True Net PnL)
+
+- **وضعیت / Status:** پذیرفته شده و نهایی (Accepted & Enforced)
+- **زمینه و مشکل (Context):** بسیاری از داشبوردها سود ناخالص (Gross PnL) را بر مبنای تفاضل قیمت ورود و خروج نشان می‌دهند. این امر تریدر را گمراه می‌کند، چرا که در لوریج‌های بالا کارمزدهای باز کردن، بستن، تمدید روزانه و سهم استخر مشارکت نوبیتکس بخش بزرگی از سود را می‌بلعد.
+- **تصمیم اتخاذ شده (Decision):** تمامی محاسبات سود/زیان در داشبورد، تقویم و گزارش‌ها به عنوان **سود خالص قطعی (True Net PnL)** تعریف شد:
+  $$\text{Spot Net PnL} = \text{Gross PnL} - \text{Fee}_{\text{buy}} - \text{Fee}_{\text{sell}}$$
+  $$\text{Margin Net PnL} = \text{Gross PnL} - \text{Fee}_{\text{open}} - \text{Fee}_{\text{close}} - \sum \text{Fee}_{\text{renew}} - \text{Pool Profit Share}$$
+- **⛔ هشدار - بازنگردید (DO NOT REVERT):** اعداد سود/زیان در تقویم، کارت‌های خلاصه، و پنجره جزئیات معاملات بسته شده باید همواره پس از کسر تمامی کارمزدها محاسبه و نمایش داده شوند.
+
+---
+
+### ADR-004: Offline TradingView Advanced Charting Library
+### استفاده انحصاری و آفلاین از موتور چارت TradingView Advanced
+
+- **وضعیت / Status:** پذیرفته شده و نهایی (Accepted & Enforced)
+- **زمینه و مشکل (Context):** در نسخه آزمایشی، سه موتور چارت (KLineCharts, TradingView Lightweight, TradingView Advanced) مقایسه شدند. موتور Lightweight و KLine ابزارهای ترسیم و اندیکاتورهای تحلیلی حرفه‌ای را نداشتند.
+- **تصمیم اتخاذ شده (Decision):** موتور **TradingView Advanced Charting Library (نسخه ۲۸)** به صورت ۱۰۰٪ محلی و آفلاین در دایرکتوری `src/nob/static/vendor/tradingview/` مستقر شد. دیتافید سفارشی JS API مستقیماً از اندپوینت‌های `/api/chart/candles` و `/api/chart/symbols` تغذیه می‌کند.
+- **⛔ هشدار - بازنگردید (DO NOT REVERT):** این چارت را با نسخه‌های سبُک، CDN خارجی، یا iframهای ابری جایگزین نکنید. ساختار آفلاین باید کاملاً حفظ شود.
+
+---
+
+### ADR-005: TradingView Symbol URL Sync and LocalStorage Isolation
+### رفع بازنشانی خودکار نماد چارت و مهار LocalStorage تردینگ‌ویو
+
+- **وضعیت / Status:** پذیرفته شده و نهایی (Accepted & Enforced)
+- **زمینه و مشکل (Context):** هنگام باز کردن آدرس‌هایی با نماد خاص (مانند `/?tab=chart&symbol=USOONUSDT`)، چارت همچنان نماد قبلی (`BTCUSDT`) را نشان می‌داد. علت این بود که کتابخانه تردینگ‌ویو مقدار `tradingview.chartproperties` را از `localStorage` مرورگر بازیابی کرده و نماد پارامتر ورودی را بازنویسی می‌کرد.
+- **تصمیم اتخاذ شده (Decision):** 
+  1. در تنظیمات ویجت چارت گزینه‌های `load_last_chart: false` و `auto_save_delay: 0` اعمال شد و قابلیت‌های `use_localstorage_for_settings` و `save_chart_properties_to_local_storage` در `disabled_features` قرار گرفتند.
+  2. کالبک `tvWidgetInstance.onChartReady` برای اعمال قطعی نماد پس از بارگذاری کامل iframe ثبت شد.
+  3. در صورت وجود نمونه قبلی ویجت، متغیر `chartSymbol` با یک واچر پویا هماهنگ شد تا متد `activeChart().setSymbol()` را فراخوانی کند.
+- **⛔ هشدار - بازنگردید (DO NOT REVERT):** گزینه‌های `load_last_chart: false` و هوک `onChartReady` نباید حذف شوند.
+
+---
+
+### ADR-006: 1W Timeframe Resolution and Pagination Loop Termination
+### رفع فریز تایم‌فریم هفتگی (1W) و خاتمه صفحه‌بندی تاریخچه کندل‌ها
+
+- **وضعیت / Status:** پذیرفته شده و نهایی (Accepted & Enforced)
+- **زمینه و مشکل (Context):** تغییر تایم‌فریم به یک‌هفته (`1W`) باعث فریز شدن چارت و حلقه بی‌پایان درخواست‌های هیستوری می‌شد. دلیل اول، عدم تطابق رشته رزولوشن (`W` در برابر `1W`) در سرور، و دلیل دوم، عدم خاتمه صفحه‌بندی زمانی بود که کندل‌های قدیمی‌تری در دیتابیس وجود نداشت.
+- **تصمیم اتخاذ شده (Decision):**
+  1. در `src/nob/server.py` هر دو فرمت `W` و `1W` استانداردسازی شدند.
+  2. در متد `getBars` در دیتافید تردینگ‌ویو، در صورتی که دیتای دریافتی قدیمی‌تر از پارامتر `to` نباشد، وضعیت `{ noData: true }` برگردانده می‌شود تا درخواست مکرر متوقف شود.
+- **⛔ هشدار - بازنگردید (DO NOT REVERT):** شرط توقف صفحه‌بندی در `getBars` را تغییر ندهید.
+
+---
+
+### ADR-007: Widescreen Layout Optimization (max-w-[1920px])
+### طراحی متناسب با مانیتورهای عریض (حداکثر عرض ۱۹۲۰ پیکسل)
+
+- **وضعیت / Status:** پذیرفته شده و نهایی (Accepted & Enforced)
+- **زمینه و مشکل (Context):** قالب اولیه سایت از `max-w-7xl` (۱۲۸۰ پیکسل) استفاده می‌کرد که در مانیتورهای مدرن (2K، 4K و Ultrawide) بیش از ۵۰٪ عرض نمایشگر را بلااستفاده می‌گذاشت و جداول ۱۲ ستونه مالی را فشرده می‌کرد.
+- **تصمیم اتخاذ شده (Decision):** حداکثر عرض کانتینر اصلی `#app` در `index.html` به `max-w-[1920px]` (۱۹۲۰ پیکسل) ارتقا یافت و عرض پنجره مودال جزئیات دارایی به `max-w-5xl` (۱۰۲۴ پیکسل) افزایش یافت.
+- **⛔ هشدار - بازنگردید (DO NOT REVERT):** عرض سایت را به ۱۲۸۰ پیکسل بازنگردانید؛ تریدرها در مانیتورهای بزرگ نیاز به دید گسترده روی جداول دارند.
+
+---
+
+### ADR-008: Bidirectional URL State Synchronization
+### همگام‌سازی کامل وضعیت رابط کاربری با پارامترهای URL (Deep Linking)
+
+- **وضعیت / Status:** پذیرفته شده و نهایی (Accepted & Enforced)
+- **زمینه و مشکل (Context):** با ریفرش شدن صفحه، تب انتخاب‌شده، فیلترهای جستجو و نماد چارت می‌پرید و کاربر به تب اسپات بازمی‌گشت.
+- **تصمیم اتخاذ شده (Decision):** همگام‌سازی دوطرفه میان وضعیت‌های واکنش‌گرای Vue و آدرس صفحه با استفاده از `history.replaceState` پیاده‌سازی شد:
+  - تب فعال: `?tab=chart|spot|margin|orders|calendar|trades`
+  - نماد و تایم‌فریم چارت: `&symbol=BTCUSDT&tf=1D`
+  - بازه تاریخ: `&from=YYYY-MM-DD&to=YYYY-MM-DD`
+  - حالت تقویم: `&calMode=all|spot|futures` و روز انتخاب‌شده `&date=YYYY-MM-DD`
+  - فیلتر سفارشات و پوزیشن‌ها و کوئری جستجو: `&q=...`
+- **⛔ هشدار - بازنگردید (DO NOT REVERT):** سینک URL را حذف نکنید؛ ماندگاری وضعیت در ریفرش و قابلیت ارسال لینک‌های مستقیم به تریدرها وابسته به این مکانیزم است.
+
+---
+
+### ADR-009: Open Orders Tab with In-App Cancellation
+### ماژول سفارشات باز نوبیتکس با قابلیت لغو مستقیم
+
+- **وضعیت / Status:** پذیرفته شده و نهایی (Accepted & Enforced)
+- **زمینه و مشکل (Context):** مشاهده و مدیریت سفارشات لیمیت/استاپ باز نیازمند مراجعه مجدد به وبسایت نوبیتکس بود.
+- **تصمیم اتخاذ شده (Decision):** تب اختصاصی سفارشات باز (`/api/orders/open`) با تفکیک اسپات و تعهدی، جهت خرید/فروش، و امکان لغو سریع (`/api/orders/cancel`) با آپدیت خوش‌بینانه (Optimistic UI) اضافه شد. همچنین سفارشات باز هر دارایی در مودال جزئیات دارایی نیز نشان داده می‌شود.
+- **نکته امنیتی:** کلیدهای API صرفاً خواندنی (Read-Only) امکان لغو سفارش ندارند؛ در صورتی که کاربر بخواهد سفارشات را لغو کند، دسترسی معاملات (Trade) را در کلید خود فعال می‌کند.
+
+---
+
+### ADR-010: Strict Iran Standard Time (UTC+03:30, No DST)
+### استاندارد منطقه زمانی ایران (IRST / UTC+03:30 بدون DST)
+
+- **وضعیت / Status:** پذیرفته شده و نهایی (Accepted & Enforced)
+- **زمینه و مشکل (Context):** طبق قانون مصوب سال ۱۴۰۱ در ایران، تغییر ساعت تابستانی (DST) ملغی شده است و ساعت رسمی ایران به صورت ثابت همیشه ۳:۳۰+ گرینویچ (UTC+03:30) است. استفاده از تایم‌زون‌های پویا در برخی کتابخانه‌ها باعث جابجایی یک‌ساعته در تاریخچه و تقویم شمسی می‌شد.
+- **تصمیم اتخاذ شده (Decision):** تمامی محاسبات زمانی در سرور و کلاینت بر مبنای آفست ثابت `+03:30` بدون اعمال DST تنظیم شده است.
+- **⛔ هشدار - بازنگردید (DO NOT REVERT):** از ساعت محلی سیستم عامل کاربر یا تایم‌زون‌های شناور برای دسته‌بندی روزهای تقویم نوبیتکس استفاده نکنید.
+
+---
+
+### ADR-011: BiDi Numerical Isolation and Canvas 2D LTR Override
+### ایزولاسیون اعداد دوجهته (BiDi) و اجبار LTR در بوم‌های نقاشی Canvas 2D
+
+- **وضعیت / Status:** پذیرفته شده و نهایی (Accepted & Enforced)
+- **زمینه و مشکل (Context):** در زبان فارسی (RTL)، ترکیب علائم منفی/مثبت، علامت دلار و درصد (مانند `-$189.51` یا `+3.79%`) وارونه نمایش داده می‌شد. همچنین در موتورهای رسم گرافیکی مبتنی بر Canvas (مانند Chart.js و TradingView)، متن‌های انگلیسی داخل تولتیپ‌ها و محورهای قیمت برعکس رندر می‌شدند.
+- **تصمیم اتخاذ شده (Decision):**
+  1. کلاس کمکی `.bidi-num` با استایل `direction: ltr; unicode-bidi: isolate; display: inline-block;` برای تمامی اعداد و مبالغ اعمال شد.
+  2. توابع `CanvasRenderingContext2D.prototype.fillText` و `measureText` در هدر صفحه بازنویسی شدند تا جهت بوم نقاشی را همیشه `ltr` نگه دارند.
+- **⛔ هشدار - بازنگردید (DO NOT REVERT):** کلاس `.bidi-num` یا اوورراید متدهای Canvas را حذف نکنید؛ در غیر این صورت خوانایی اعداد در رابط فارسی مختل خواهد شد.
+
+---
+
+### ADR-012: Offline-First Architecture and Zero External Telemetry
+### اصل حریم خصوصی ۱۰۰٪ آفلاین و عدم وابستگی به اینترنت یا CDN
+
+- **وضعیت / Status:** پذیرفته شده و نهایی (Accepted & Enforced)
+- **زمینه و مشکل (Context):** داده‌های مالی، کلیدهای دسترسی API و یادداشت‌های استراتژی شخصی کاربر کاملاً محرمانه هستند و تحت هیچ شرایطی نباید به سرورهای خارجی ارسال شوند. همچنین نباید برای لود فونت‌ها، استایل‌ها یا کتابخانه‌ها به CDNهای عمومی وابسته بود.
+- **تصمیم اتخاذ شده (Decision):** تمامی فایل‌های کتابخانه‌ها شامل Vue 3, Tailwind, Chart.js, Jalaali.js, TradingView Advanced و فونت‌های Vazirmatn و JetBrains Mono به صورت محلی در سورس کد ذخیره شده‌اند و هیچ ابزار ردیابی (Analytics/Telemetry) در برنامه وجود ندارد.
+- **⛔ هشدار - بازنگردید (DO NOT REVERT):** هرگز از لینک‌های CDN خارجی (`cdn.jsdelivr.net`, `unpkg.com`, `fonts.googleapis.com`) استفاده نکنید. تمامی متعلقات باید محلی و آفلاین بمانند.
