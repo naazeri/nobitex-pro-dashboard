@@ -31,7 +31,7 @@ Phase 1 (DB WAL, Lifespan, IRST Timezone)
 | Phase | Title | Audit IDs | Grouping Strategy | Risk |
 | :--- | :--- | :--- | :--- | :--- |
 | **Phase 1** ✅ | Core Infra: SQLite WAL, Lifespan & IRST Timezone | `DB-01`, `BUG-04` (core) | Grouped (foundational infra) | Low (Done) |
-| **Phase 2** | `NobitexClient` Transport, Rate Limiting & Error Mapping | `API-01`, `API-05` | Grouped (same transport layer) | Medium |
+| **Phase 2** ✅ | `NobitexClient` Transport, Rate Limiting & Error Mapping | `API-01`, `API-05` | Grouped (same transport layer) | Medium (Done) |
 | **Phase 3** | Incremental Sync (`fromId`) & Full Positions Pagination | `API-02`, `API-03` | Grouped (same sync pipeline) | Medium |
 | **Phase 4** | Surgical Fixes: Open Orders & Calendar Math | `BUG-01`, `BUG-02` | Grouped (small isolated fixes) | Low |
 | **Phase 5** | Spot Portfolio WAC Replay, `-RLS` Markets & Margin Wallets | `BUG-03`, `BUG-04` (SQL) | Isolated (financial core) | Medium |
@@ -76,7 +76,7 @@ Phase 1 (DB WAL, Lifespan, IRST Timezone)
 
 ---
 
-## Phase 2: `NobitexClient` Transport Hardening, Rate Limiting & Error Mapping
+## Phase 2: `NobitexClient` Transport Hardening, Rate Limiting & Error Mapping ✅ (Completed)
 **Covers:** `API-01`, `API-05`  
 **Why grouped:** Both live inside the HTTP transport and error-handling boundary of `NobitexClient` and its FastAPI callers.
 
@@ -85,39 +85,40 @@ Phase 1 (DB WAL, Lifespan, IRST Timezone)
 - `src/nob/server.py`
 
 ### Tasks
-- [ ] Define typed exceptions in `src/nob/nobitex_client.py`:
-  - `NobitexAPIError(status_code, code, message, payload=None)`
-  - `NobitexAuthError(NobitexAPIError)` (for `401` / `403`)
+- [x] Define typed exceptions in `src/nob/nobitex_client.py`:
+  - `NobitexAPIError(status_code, code, message, payload=None, backoff=None)`
+  - `NobitexAuthError(NobitexAPIError)` (for `401` / `403` / missing credentials)
   - `NobitexRateLimitError(NobitexAPIError)` (for exhausted `429`)
-- [ ] Make credentials optional in `NobitexClient.__init__(api_key=None, secret=None, base_url=DEFAULT_BASE_URL, require_auth=False)`:
-  - Attempt `load_credentials()` silently if not provided; only raise `ValueError` inside `_request(..., auth=True)` when keys are missing.
-  - Add `close()` method to close `self.session`.
-- [ ] Implement thread-safe per-endpoint rate throttler (`_EndpointRateLimiter`) using `threading.Lock`:
-  - `/market/trades/list`: min interval `2.1s` (30/min)
-  - `/market/orders/list`: min interval `2.1s` (30/min)
-  - `/positions/list`: min interval `20.5s` or token bucket of 30 / 600s (30/10 min)
-  - `/market/stats`: min interval `3.1s` (20/min)
-  - `/users/wallets/list`: min interval `3.1s` (20/min)
-  - `/market/udf/history`: min interval `1.05s` (60/min)
-- [ ] Implement centralized `_request(method, path, params=None, body_dict=None, auth=True, timeout=20, max_retries=3)`:
+- [x] Make credentials optional in `NobitexClient.__init__(api_key=None, secret=None, base_url=DEFAULT_BASE_URL, require_auth=False)`:
+  - Attempt `load_credentials()` silently if not provided; raise `NobitexAuthError(401, "MissingCredentials")` inside `_request(..., auth=True)` when keys are missing.
+  - Add `close()` and context manager support (`__enter__`/`__exit__`) to close `self.session`.
+- [x] Implement thread-safe per-endpoint sliding-window + min-spacing rate throttler (`_EndpointRateLimiter`) using `threading.Lock` (releasing lock during sleep):
+  - `/market/trades/list`: 28/60s, min `2.05s` (official: 30/min)
+  - `/market/orders/list`: 28/60s, min `2.05s` (official: 30/min)
+  - `/positions/list`: 28/600s, min `0.5s` (official: 30/10 min)
+  - `/positions/{id}/status`: 95/600s, min `0.2s` (official: 100/10 min)
+  - `/market/stats`: 18/60s, min `3.1s` (official: 20/min)
+  - `/users/wallets/list`: 18/60s, min `0.5s` (official: 20/min)
+  - `/market/udf/history`: 55/60s, min `1.05s` (official: 60/min)
+- [x] Implement centralized `_request(method, path, params=None, body_dict=None, auth=True, timeout=20, max_retries=3)`:
   - Always set `User-Agent: TraderBot/NobAPI-2.1.0` and `Accept: application/json`.
   - Sign `timestamp + METHOD + full_path + raw_body` fresh on **every attempt** (including retries, so `Nobitex-Timestamp` never drifts >30s).
-  - On `HTTP 429`: read `backOff` from JSON (default `5`, cap `60`), sleep `backOff + 0.5`s, retry up to `max_retries`.
+  - On `HTTP 429`: read `backOff` from JSON (default `5`, clamped `1..60`), sleep `backOff + 0.5`s, retry up to `max_retries`.
   - On `HTTP 401` or `403`: **fail fast immediately (0 retries)** to avoid the 30-minute IP ban after 100 failed auths.
   - On `HTTP >= 500` or `requests.RequestException`: exponential backoff (`1s`, `2s`, `4s`).
   - On `HTTP 200` with `data.get("status") == "failed"`: raise `NobitexAPIError(200, data.get("code"), data.get("message"), data)`.
-- [ ] Refactor all existing `NobitexClient` methods (`fetch_trades_page`, `fetch_wallets`, `fetch_market_stats`, `fetch_positions`, `fetch_all_orders`, `cancel_order`) to route through `_request()`.
-- [ ] In `src/nob/server.py`:
-  - Use a shared singleton `NobitexClient` managed by `lifespan` (closed on shutdown).
-  - Add a server-side 5-second cooldown cache on `POST /api/prices/refresh` to respect `/market/stats` 20/min limit.
-  - In `api_cancel_order`: catch `NobitexAuthError` → `HTTP 403`, `NobitexAPIError` → `HTTP 400/422` returning `{"code": e.code, "message": e.message}` instead of blanket `HTTP 500`.
+- [x] Refactor all existing `NobitexClient` methods (`fetch_trades_page`, `fetch_wallets`, `fetch_market_stats`, `fetch_positions`, `fetch_all_orders`, `cancel_order`) to route through `_request()`.
+- [x] In `src/nob/server.py`:
+  - Use a shared singleton `NobitexClient` (`get_nobitex_client()`) managed by `lifespan` (closed on shutdown).
+  - Add a thread-safe 5-second cooldown cache on `POST /api/prices/refresh` to respect `/market/stats` 20/min limit.
+  - In `api_cancel_order`: map `NobitexAuthError` → `403`, `NobitexRateLimitError` → `429`, `NobitexAPIError` → `4xx/422` returning structured JSON (`code`, `message`, `detail` string compatible with `index.html:4268`).
 
 ### Verification & Acceptance Criteria
-- [ ] Unit tests with mocked `requests.Session` verify:
-  - `429` with `{"backOff": 2}` sleeps and succeeds on retry.
-  - `401`/`403` raises `NobitexAuthError` with **1** call (no retries).
-  - `NobitexClient()` without `.env` successfully calls `fetch_market_stats()` (public) and raises on `fetch_wallets()` (private).
-  - `fetch_all_orders()` no longer sleeps `0.1s` or silently `break`s on error.
+- [x] Unit tests with mocked `requests.Session` verified:
+  - `429` with `backOff` sleeps `backOff + 0.5`s (clamped `1..60`) and succeeds on retry.
+  - `401`/`403` raises `NobitexAuthError` with **1** call (0 retries).
+  - `NobitexClient(require_auth=False)` without credentials calls `fetch_market_stats()` (public) and fails fast with 0 network calls on `fetch_wallets()` (private).
+  - `fetch_all_orders()` enforces 30 req/min spacing, retries transient 5xx/network errors with exponential backoff, and no longer silently `break`s on error.
 
 ---
 

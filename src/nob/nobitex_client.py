@@ -1,12 +1,16 @@
 import os
+import re
 import time
 import base64
 import json
+import threading
+from collections import deque
 from pathlib import Path
-from typing import Optional, List, Dict, Any, Callable
+from typing import Optional, List, Dict, Any, Callable, Tuple
 from urllib.parse import urlencode
 
 import requests
+
 try:
     from dotenv import load_dotenv
 except ImportError:
@@ -25,10 +29,110 @@ except ImportError:
                 k, v = k.strip(), v.strip().strip("'\"")
                 if k and k not in os.environ:
                     os.environ[k] = v
+
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 DEFAULT_BASE_URL = "https://apiv2.nobitex.ir"
-USER_AGENT = "TraderBot/NobAPI-1.0.0"
+USER_AGENT = "TraderBot/NobAPI-2.1.0"
+
+# Per-endpoint rate limits: (max_calls_in_window, window_seconds, min_spacing_seconds)
+# Includes a safety margin below official Nobitex limits to prevent 429 & 2-min token bans.
+ENDPOINT_RATE_LIMITS: Dict[str, Tuple[int, float, float]] = {
+    "/market/trades/list": (28, 60.0, 2.05),          # Official: 30 / min
+    "/market/orders/list": (28, 60.0, 2.05),          # Official: 30 / min
+    "/market/orders/update-status": (85, 60.0, 0.2),  # Official: 90 / min
+    "/market/orders/cancel-old": (28, 60.0, 2.05),    # Official: 30 / min
+    "/positions/list": (28, 600.0, 0.5),              # Official: 30 / 10 min
+    "/positions/{id}/status": (95, 600.0, 0.2),       # Official: 100 / 10 min
+    "/market/stats": (18, 60.0, 3.1),                 # Official: 20 / min
+    "/users/wallets/list": (18, 60.0, 0.5),           # Official: 20 / min
+    "/v2/wallets": (14, 60.0, 0.5),                   # Official: 15 / min
+    "/market/udf/history": (55, 60.0, 1.05),          # Official: 60 / min
+    "/margin/markets/list": (28, 60.0, 2.05),         # Official: 30 / min
+}
+
+_NUMERIC_SEGMENT_RE = re.compile(r"/\d+(?=/|$)")
+
+
+class NobitexAPIError(RuntimeError):
+    """Structured error returned by Nobitex REST API."""
+
+    def __init__(
+        self,
+        status_code: int,
+        code: Optional[str],
+        message: str,
+        payload: Optional[Dict[str, Any]] = None,
+        backoff: Optional[float] = None,
+    ):
+        self.status_code = status_code
+        self.code = code or "UnknownError"
+        self.message = message or self.code
+        self.payload = payload
+        self.backoff = backoff
+        super().__init__(f"Nobitex API Error (HTTP {status_code}, code={self.code}): {self.message}")
+
+
+class NobitexAuthError(NobitexAPIError):
+    """Authentication or permission error (401/403 or missing credentials). Never retried."""
+
+
+class NobitexRateLimitError(NobitexAPIError):
+    """Rate limit exceeded (HTTP 429) after exhausting retries."""
+
+
+def _normalize_endpoint_key(path: str) -> str:
+    """Normalize endpoint path for rate-limit bucketing (strips query & numeric IDs)."""
+    base = path.split("?", 1)[0]
+    return _NUMERIC_SEGMENT_RE.sub("/{id}", base)
+
+
+class _EndpointRateLimiter:
+    """Thread-safe sliding-window + minimum-spacing rate limiter per endpoint."""
+
+    def __init__(
+        self,
+        rules: Optional[Dict[str, Tuple[int, float, float]]] = None,
+        clock_fn: Callable[[], float] = time.monotonic,
+        sleep_fn: Callable[[float], None] = time.sleep,
+    ):
+        self._rules = rules if rules is not None else ENDPOINT_RATE_LIMITS
+        self._clock = clock_fn
+        self._sleep = sleep_fn
+        self._lock = threading.Lock()
+        self._history: Dict[str, deque] = {}
+
+    def acquire(self, path: str) -> None:
+        key = _normalize_endpoint_key(path)
+        rule = self._rules.get(key)
+        if not rule:
+            return
+        max_calls, window_sec, min_spacing = rule
+
+        while True:
+            wait_sec = 0.0
+            with self._lock:
+                now = self._clock()
+                dq = self._history.setdefault(key, deque())
+                cutoff = now - window_sec
+                while dq and dq[0] <= cutoff:
+                    dq.popleft()
+
+                if dq and min_spacing > 0:
+                    since_last = now - dq[-1]
+                    if since_last < min_spacing:
+                        wait_sec = max(wait_sec, min_spacing - since_last)
+
+                if len(dq) >= max_calls:
+                    window_wait = (dq[0] + window_sec) - now
+                    if window_wait > 0:
+                        wait_sec = max(wait_sec, window_wait)
+
+                if wait_sec <= 0.0:
+                    dq.append(now)
+                    return
+
+            self._sleep(wait_sec)
 
 
 def find_env_file() -> Optional[Path]:
@@ -87,13 +191,167 @@ def sign_request(secret_b64: str, method: str, full_path: str, raw_body: str = "
 
 
 class NobitexClient:
-    def __init__(self, api_key: Optional[str] = None, secret: Optional[str] = None, base_url: str = DEFAULT_BASE_URL):
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        secret: Optional[str] = None,
+        base_url: str = DEFAULT_BASE_URL,
+        require_auth: bool = False,
+        sleep_fn: Callable[[float], None] = time.sleep,
+        clock_fn: Callable[[], float] = time.monotonic,
+    ):
         if not api_key or not secret:
-            api_key, secret = load_credentials()
+            try:
+                loaded_key, loaded_secret = load_credentials()
+                api_key = api_key or loaded_key
+                secret = secret or loaded_secret
+            except ValueError:
+                if require_auth:
+                    raise
+                api_key = api_key or ""
+                secret = secret or ""
+
         self.api_key = api_key
         self.secret = secret
         self.base_url = base_url.rstrip("/")
         self.session = requests.Session()
+        self._sleep = sleep_fn
+        self._rate_limiter = _EndpointRateLimiter(clock_fn=clock_fn, sleep_fn=sleep_fn)
+
+    def close(self) -> None:
+        """Close underlying HTTP session."""
+        try:
+            self.session.close()
+        except Exception:
+            pass
+
+    def __enter__(self) -> "NobitexClient":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()
+
+    def _parse_json_safe(self, response: requests.Response) -> Dict[str, Any]:
+        try:
+            data = response.json()
+            return data if isinstance(data, dict) else {"data": data}
+        except Exception:
+            return {}
+
+    def _request(
+        self,
+        method: str,
+        path: str,
+        params: Optional[Dict[str, Any]] = None,
+        body_dict: Optional[Dict[str, Any]] = None,
+        auth: bool = True,
+        timeout: float = 20.0,
+        max_retries: int = 3,
+        check_status_ok: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Centralized HTTP transport with:
+        - Per-endpoint rate limiting
+        - Fresh Ed25519 signing on every attempt
+        - HTTP 429 backOff sleep & retry
+        - Immediate fail-fast on HTTP 401/403 (0 retries to prevent 30-min IP ban)
+        - Exponential backoff on 5xx / transient network errors
+        """
+        method_upper = method.upper()
+        if auth and (not self.api_key or not self.secret):
+            raise NobitexAuthError(
+                401,
+                "MissingCredentials",
+                "API or SECRET not configured in environment or .env file.",
+            )
+
+        clean_params = {k: v for k, v in (params or {}).items() if v is not None}
+        full_path = f"{path}?{urlencode(clean_params)}" if clean_params else path
+        raw_body = json.dumps(body_dict, separators=(",", ":")) if body_dict is not None else ""
+        url = f"{self.base_url}{full_path}"
+
+        last_error: Optional[Exception] = None
+
+        for attempt in range(max_retries + 1):
+            self._rate_limiter.acquire(path)
+
+            headers: Dict[str, str] = {
+                "User-Agent": USER_AGENT,
+                "Accept": "application/json",
+            }
+            if body_dict is not None:
+                headers["Content-Type"] = "application/json"
+
+            if auth:
+                sig, ts = sign_request(self.secret, method_upper, full_path, raw_body)
+                headers["Nobitex-Key"] = self.api_key
+                headers["Nobitex-Signature"] = sig
+                headers["Nobitex-Timestamp"] = ts
+
+            try:
+                response = self.session.request(
+                    method=method_upper,
+                    url=url,
+                    headers=headers,
+                    data=raw_body.encode("utf-8") if raw_body else None,
+                    timeout=timeout,
+                )
+            except requests.RequestException as exc:
+                last_error = NobitexAPIError(0, "NetworkError", str(exc))
+                if attempt < max_retries:
+                    self._sleep(float(2 ** attempt))
+                    continue
+                raise last_error from exc
+
+            status = response.status_code
+            data = self._parse_json_safe(response)
+
+            # Fail fast on auth/permission errors — NEVER retry (prevents 30-min IP ban)
+            if status in (401, 403):
+                code = data.get("code") or ("Unauthorized" if status == 401 else "Forbidden")
+                msg = data.get("message") or response.text or f"HTTP {status}"
+                raise NobitexAuthError(status, code, msg, payload=data)
+
+            # Handle 429 Too Many Requests using server-provided backOff
+            if status == 429:
+                code = data.get("code") or "TooManyRequests"
+                msg = data.get("message") or response.text or "Too Many Requests"
+                try:
+                    raw_backoff = float(data.get("backOff", 5.0))
+                except (ValueError, TypeError):
+                    raw_backoff = 5.0
+                backoff = min(max(raw_backoff, 1.0), 60.0)
+                if attempt < max_retries:
+                    self._sleep(backoff + 0.5)
+                    continue
+                raise NobitexRateLimitError(status, code, msg, payload=data, backoff=backoff)
+
+            # Retry transient 5xx server errors
+            if status >= 500:
+                code = data.get("code") or f"HTTP{status}"
+                msg = data.get("message") or response.text or f"HTTP {status}"
+                last_error = NobitexAPIError(status, code, msg, payload=data)
+                if attempt < max_retries:
+                    self._sleep(float(2 ** attempt))
+                    continue
+                raise last_error
+
+            # Non-retryable 4xx client errors (400, 404, 422, etc.)
+            if status != 200:
+                code = data.get("code") or f"HTTP{status}"
+                msg = data.get("message") or response.text or f"HTTP {status}"
+                raise NobitexAPIError(status, code, msg, payload=data)
+
+            # HTTP 200 business-level failure check
+            api_status = data.get("status")
+            if api_status == "failed" or (check_status_ok and api_status is not None and api_status not in ("ok", "success")):
+                code = data.get("code") or "BusinessError"
+                msg = data.get("message") or "Nobitex API returned failed status"
+                raise NobitexAPIError(200, code, msg, payload=data)
+
+            return data
+
+        raise last_error or NobitexAPIError(0, "UnknownError", "Request failed after retries")
 
     def fetch_trades_page(
         self,
@@ -119,34 +377,7 @@ class NobitexClient:
         if trade_type:
             params["tradeType"] = trade_type
 
-        query_string = urlencode(params)
-        full_path = f"/market/trades/list?{query_string}"
-
-        sig, ts = sign_request(self.secret, "GET", full_path, "")
-        headers = {
-            "Nobitex-Key": self.api_key,
-            "Nobitex-Signature": sig,
-            "Nobitex-Timestamp": ts,
-            "User-Agent": USER_AGENT,
-            "Accept": "application/json",
-        }
-
-        url = f"{self.base_url}{full_path}"
-        response = self.session.get(url, headers=headers, timeout=20)
-
-        if response.status_code != 200:
-            try:
-                err_data = response.json()
-                msg = err_data.get("message") or err_data.get("code") or str(err_data)
-            except Exception:
-                msg = response.text or f"HTTP {response.status_code}"
-            raise RuntimeError(f"Nobitex API Error (HTTP {response.status_code}): {msg}")
-
-        data = response.json()
-        if data.get("status") == "failed":
-            raise RuntimeError(f"Nobitex Error: {data.get('message', 'Unknown error')} (code: {data.get('code')})")
-
-        return data
+        return self._request("GET", "/market/trades/list", params=params, auth=True, timeout=20.0)
 
     def fetch_all_trades(
         self,
@@ -184,8 +415,6 @@ class NobitexClient:
                 break
 
             page += 1
-            # Respect rate limit (30 requests/minute max)
-            time.sleep(2.0)
 
         if progress_callback:
             progress_callback(page, len(all_trades), True, f"موفق: {len(all_trades)} معامله دریافت شد.")
@@ -194,41 +423,18 @@ class NobitexClient:
 
     def fetch_wallets(self) -> List[Dict[str, Any]]:
         """Fetch all user wallets and their balances (POST /users/wallets/list)."""
-        full_path = "/users/wallets/list"
-        sig, ts = sign_request(self.secret, "POST", full_path, "")
-        headers = {
-            "Nobitex-Key": self.api_key,
-            "Nobitex-Signature": sig,
-            "Nobitex-Timestamp": ts,
-            "User-Agent": USER_AGENT,
-            "Accept": "application/json",
-        }
-        url = f"{self.base_url}{full_path}"
-        response = self.session.post(url, headers=headers, timeout=20)
-        if response.status_code != 200:
-            raise RuntimeError(f"Nobitex Wallets Error (HTTP {response.status_code}): {response.text}")
-        data = response.json()
-        if data.get("status") != "ok":
-            raise RuntimeError(f"Nobitex Wallets Error: {data.get('message', 'Unknown error')}")
+        data = self._request("POST", "/users/wallets/list", auth=True, timeout=20.0)
         return data.get("wallets", [])
 
     def fetch_market_stats(
         self, src_currencies: Optional[List[str]] = None, dst_currency: str = "usdt"
     ) -> Dict[str, Any]:
         """Fetch real-time market statistics from Nobitex (public endpoint, no auth)."""
-        url = f"{self.base_url}/market/stats"
-        params = {}
+        params: Dict[str, Any] = {}
         if src_currencies:
             params["srcCurrency"] = ",".join(c.lower() for c in src_currencies)
             params["dstCurrency"] = dst_currency.lower()
-        headers = {
-            "User-Agent": USER_AGENT,
-            "Accept": "application/json",
-        }
-        response = self.session.get(url, params=params, headers=headers, timeout=15)
-        if response.status_code != 200:
-            raise RuntimeError(f"Nobitex Market Stats Error (HTTP {response.status_code})")
-        data = response.json()
+        data = self._request("GET", "/market/stats", params=params, auth=False, timeout=15.0)
         return data.get("stats", {})
 
     def fetch_positions(
@@ -238,22 +444,8 @@ class NobitexClient:
         Fetch leveraged margin positions from /positions/list.
         status can be 'active' (open positions) or 'past' (closed/liquidated positions).
         """
-        full_path = f"/positions/list?status={status}&page={page}&pageSize={page_size}"
-        sig, ts = sign_request(self.secret, "GET", full_path, "")
-        headers = {
-            "Nobitex-Key": self.api_key,
-            "Nobitex-Signature": sig,
-            "Nobitex-Timestamp": ts,
-            "User-Agent": USER_AGENT,
-            "Accept": "application/json",
-        }
-        url = f"{self.base_url}{full_path}"
-        response = self.session.get(url, headers=headers, timeout=15)
-        if response.status_code != 200:
-            raise RuntimeError(f"Nobitex Positions Error (HTTP {response.status_code}): {response.text}")
-        data = response.json()
-        if data.get("status") != "ok":
-            raise RuntimeError(f"Nobitex Positions Error: {data.get('message', 'Unknown error')}")
+        params = {"status": status, "page": page, "pageSize": page_size}
+        data = self._request("GET", "/positions/list", params=params, auth=True, timeout=15.0)
         return data.get("positions", [])
 
     def fetch_all_orders(
@@ -261,24 +453,18 @@ class NobitexClient:
     ) -> List[Dict[str, Any]]:
         """
         Fetch user orders with tradeType ('Spot' vs 'Margin') from /market/orders/list.
+        Rate limiting and 429 retries are enforced automatically via _request().
         """
         all_orders: List[Dict[str, Any]] = []
         page = 1
         while page <= max_pages:
-            full_path = f"/market/orders/list?status={status}&details=2&pageSize={page_size}&page={page}"
-            sig, ts = sign_request(self.secret, "GET", full_path, "")
-            headers = {
-                "Nobitex-Key": self.api_key,
-                "Nobitex-Signature": sig,
-                "Nobitex-Timestamp": ts,
-                "User-Agent": USER_AGENT,
-                "Accept": "application/json",
+            params = {
+                "status": status,
+                "details": 2,
+                "pageSize": page_size,
+                "page": page,
             }
-            url = f"{self.base_url}{full_path}"
-            response = self.session.get(url, headers=headers, timeout=20)
-            if response.status_code != 200:
-                break
-            data = response.json()
+            data = self._request("GET", "/market/orders/list", params=params, auth=True, timeout=20.0)
             orders = data.get("orders", [])
             if not orders:
                 break
@@ -286,30 +472,18 @@ class NobitexClient:
             if len(orders) < page_size:
                 break
             page += 1
-            time.sleep(0.1)
         return all_orders
 
     def cancel_order(self, order_id: int) -> Dict[str, Any]:
         """
         Cancel an open order via POST /market/orders/update-status.
         """
-        full_path = "/market/orders/update-status"
         body_dict = {"order": int(order_id), "status": "canceled"}
-        raw_body = json.dumps(body_dict, separators=(",", ":"))
-        sig, ts = sign_request(self.secret, "POST", full_path, raw_body)
-        headers = {
-            "Nobitex-Key": self.api_key,
-            "Nobitex-Signature": sig,
-            "Nobitex-Timestamp": ts,
-            "User-Agent": USER_AGENT,
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        }
-        url = f"{self.base_url}{full_path}"
-        response = self.session.post(url, headers=headers, data=raw_body, timeout=15)
-        if response.status_code != 200:
-            raise RuntimeError(f"Cancel order failed (HTTP {response.status_code}): {response.text}")
-        data = response.json()
-        if data.get("status") != "ok":
-            raise RuntimeError(f"Cancel order failed: {data.get('message', 'Unknown error')}")
-        return data
+        return self._request(
+            "POST",
+            "/market/orders/update-status",
+            body_dict=body_dict,
+            auth=True,
+            timeout=15.0,
+            max_retries=1,
+        )

@@ -1,6 +1,7 @@
 import io
 import csv
 import time
+import threading
 import urllib.request
 import json
 import webbrowser
@@ -16,7 +17,7 @@ TEHRAN_TZ = IRST
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Response
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -51,7 +52,12 @@ from nob.db import (
     get_open_orders,
     update_order_status,
 )
-from nob.nobitex_client import NobitexClient
+from nob.nobitex_client import (
+    NobitexClient,
+    NobitexAPIError,
+    NobitexAuthError,
+    NobitexRateLimitError,
+)
 from nob.pnl import (
     calculate_portfolio,
     calculate_positions_summary,
@@ -62,10 +68,29 @@ from nob.pnl import (
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
+_nobitex_client: Optional[NobitexClient] = None
+_client_lock = threading.Lock()
+
+
+def get_nobitex_client() -> NobitexClient:
+    """Return shared singleton NobitexClient (lazy-initialized, public-safe)."""
+    global _nobitex_client
+    if _nobitex_client is None:
+        with _client_lock:
+            if _nobitex_client is None:
+                _nobitex_client = NobitexClient(require_auth=False)
+    return _nobitex_client
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    get_nobitex_client()
     yield
+    global _nobitex_client
+    if _nobitex_client is not None:
+        _nobitex_client.close()
+        _nobitex_client = None
 
 
 app = FastAPI(title="Nobitex Portfolio & Trades", version="2.1.0", lifespan=lifespan)
@@ -151,7 +176,7 @@ def api_get_portfolio(
     # If prices are empty, fetch from Nobitex public API
     if not prices:
         try:
-            client = NobitexClient()
+            client = get_nobitex_client()
             fresh_prices = client.fetch_market_stats()
             upsert_market_prices(fresh_prices)
             prices = fresh_prices
@@ -186,7 +211,7 @@ def api_get_positions():
     # If no positions saved yet, fetch directly from Nobitex
     if not positions:
         try:
-            client = NobitexClient()
+            client = get_nobitex_client()
             active = client.fetch_positions("active", page_size=100)
             past = client.fetch_positions("past", page_size=100)
             upsert_positions(active + past)
@@ -384,7 +409,7 @@ def perform_sync():
         sync_status["last_error"] = None
         sync_status["step"] = "Connecting to Nobitex..."
 
-        client = NobitexClient()
+        client = get_nobitex_client()
 
         # 1. Sync wallet balances
         sync_status["step"] = "Fetching wallet balances..."
@@ -455,21 +480,43 @@ def api_sync_status():
     return sync_status
 
 
+_prices_refresh_lock = threading.Lock()
+_prices_refresh_cache: Dict[str, Any] = {"timestamp": 0.0, "result": None}
+PRICES_REFRESH_COOLDOWN_SEC = 5.0
+
+
 @app.post("/api/prices/refresh")
 def api_refresh_prices():
     """
     Fetch real-time market stats from Nobitex public API and update SQLite.
-    Returns the refreshed prices count and timestamp.
+    Uses a 5-second server-side cooldown cache to stay well within the 20 req/min limit.
     """
+    now = time.monotonic()
+    with _prices_refresh_lock:
+        cached_res = _prices_refresh_cache.get("result")
+        if cached_res and (now - _prices_refresh_cache["timestamp"] < PRICES_REFRESH_COOLDOWN_SEC):
+            return {**cached_res, "cached": True}
+
     try:
-        client = NobitexClient()
+        client = get_nobitex_client()
         fresh_prices = client.fetch_market_stats()
         count = upsert_market_prices(fresh_prices)
-        return {
+        result = {
             "status": "ok",
             "updated_count": count,
             "timestamp": now_irst().isoformat(),
         }
+        with _prices_refresh_lock:
+            _prices_refresh_cache["timestamp"] = time.monotonic()
+            _prices_refresh_cache["result"] = result
+        return result
+    except NobitexRateLimitError as e:
+        return JSONResponse(
+            status_code=429,
+            content={"status": "error", "code": e.code, "message": e.message, "backoff": e.backoff},
+        )
+    except NobitexAPIError as e:
+        return {"status": "error", "code": e.code, "message": e.message}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
@@ -798,7 +845,7 @@ def api_get_open_orders(refresh: bool = False):
     if not refresh and _open_orders_cache["data"] and (now - _open_orders_cache["timestamp"] < 10.0):
         return _open_orders_cache["data"]
 
-    client = NobitexClient()
+    client = get_nobitex_client()
     raw_orders = []
     source = "live"
     try:
@@ -933,12 +980,30 @@ def api_cancel_order(req: CancelOrderRequest):
     if not req.order_id:
         raise HTTPException(status_code=400, detail="order_id is required")
 
-    client = NobitexClient()
+    client = get_nobitex_client()
     try:
         res = client.cancel_order(req.order_id)
         update_order_status(req.order_id, "Canceled")
         _open_orders_cache = {"timestamp": 0.0, "data": None}
         return {"status": "ok", "message": "سفارش با موفقیت لغو شد.", "result": res}
+    except NobitexAuthError as e:
+        msg = "کلید API شما دسترسی لغو سفارش (TRADE) ندارد یا نامعتبر است."
+        return JSONResponse(
+            status_code=403,
+            content={"status": "failed", "code": e.code, "message": msg, "detail": msg},
+        )
+    except NobitexRateLimitError as e:
+        msg = f"محدودیت فراخوانی نوبیتکس؛ لطفاً {int(e.backoff or 5)} ثانیه صبر کنید."
+        return JSONResponse(
+            status_code=429,
+            content={"status": "failed", "code": e.code, "message": msg, "detail": msg, "backoff": e.backoff},
+        )
+    except NobitexAPIError as e:
+        http_status = e.status_code if 400 <= e.status_code < 500 else 422
+        return JSONResponse(
+            status_code=http_status,
+            content={"status": "failed", "code": e.code, "message": e.message, "detail": e.message},
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
