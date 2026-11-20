@@ -4,6 +4,7 @@
 > **Reference Documentation:** `https://apidocs.nobitex.ir/` (v2 REST API & Centrifugo WebSocket)  
 > **Audited Codebase:** `src/nob/nobitex_client.py`, `src/nob/server.py`, `src/nob/pnl.py`, `src/nob/db.py`, `src/nob/export_csv.py`, `src/nob/static/index.html`  
 > **Audit Date:** 2026-11-19  
+> **Resolution Status:** ✅ **All 15 findings (`API-01..05`, `BUG-01..04`, `DB-01`, `OPT-01..05`) implemented & verified across Phases 1–11 (see `IMPLEMENTATION_PLAN.md`).**  
 
 ---
 

@@ -1284,6 +1284,192 @@ def api_cancel_order(req: CancelOrderRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class ClosePositionRequest(BaseModel):
+    execution: str = "market"  # limit, market, stop_limit, stop_market, oco
+    amount: float
+    price: Optional[float] = None
+    stop_price: Optional[float] = None
+    stop_limit_price: Optional[float] = None
+
+
+class EditCollateralRequest(BaseModel):
+    collateral: float
+
+
+class CancelOldOrdersRequest(BaseModel):
+    hours: Optional[float] = None
+    execution: Optional[str] = None
+    trade_type: Optional[str] = None
+    src_currency: Optional[str] = None
+    dst_currency: Optional[str] = None
+
+
+def _map_trade_action_error(e: Exception) -> JSONResponse:
+    """Standardized error mapping for TRADE-permission endpoints (zero retries on 401/403)."""
+    if isinstance(e, NobitexAuthError):
+        msg = "کلید API شما دسترسی معامله (TRADE) ندارد یا نامعتبر است. (TRADE permission required)"
+        return JSONResponse(
+            status_code=403,
+            content={"status": "failed", "code": "TradePermissionRequired", "upstream_code": e.code, "message": msg, "detail": msg},
+        )
+    if isinstance(e, NobitexRateLimitError):
+        msg = f"محدودیت فراخوانی نوبیتکس؛ لطفاً {int(e.backoff or 5)} ثانیه صبر کنید."
+        return JSONResponse(
+            status_code=429,
+            content={"status": "failed", "code": e.code, "message": msg, "detail": msg, "backoff": e.backoff},
+        )
+    if isinstance(e, NobitexAPIError):
+        http_status = e.status_code if 400 <= e.status_code < 500 else 422
+        return JSONResponse(
+            status_code=http_status,
+            content={"status": "failed", "code": e.code, "message": e.message, "detail": e.message},
+        )
+    return JSONResponse(status_code=500, content={"status": "failed", "code": "InternalError", "message": str(e), "detail": str(e)})
+
+
+@app.post("/api/positions/{position_id}/close")
+def api_close_position(position_id: int, req: ClosePositionRequest):
+    """Submit a closing order for an open margin position (requires TRADE permission)."""
+    exec_norm = req.execution.strip().lower()
+    if exec_norm not in {"limit", "market", "stop_limit", "stop_market", "oco"}:
+        raise HTTPException(status_code=400, detail="Invalid execution type. Must be limit, market, stop_limit, stop_market, or oco.")
+    if req.amount <= 0:
+        raise HTTPException(status_code=400, detail="amount must be greater than 0.")
+    if exec_norm in {"limit", "stop_limit", "oco"} and (req.price is None or req.price <= 0):
+        raise HTTPException(status_code=400, detail=f"price is required and must be > 0 for execution='{exec_norm}'.")
+    if exec_norm in {"stop_limit", "stop_market", "oco"} and (req.stop_price is None or req.stop_price <= 0):
+        raise HTTPException(status_code=400, detail=f"stop_price is required and must be > 0 for execution='{exec_norm}'.")
+
+    client = get_nobitex_client()
+    try:
+        res = client.close_position(
+            position_id=position_id,
+            execution=exec_norm,
+            amount=req.amount,
+            price=req.price,
+            stop_price=req.stop_price,
+            stop_limit_price=req.stop_limit_price,
+        )
+        try:
+            updated = client.fetch_position_status(position_id)
+            if updated:
+                upsert_positions([updated])
+        except Exception:
+            pass
+        return {"status": "ok", "message": "سفارش بستن موقعیت ثبت شد.", "result": res}
+    except Exception as e:
+        return _map_trade_action_error(e)
+
+
+@app.post("/api/positions/{position_id}/edit-collateral")
+def api_edit_position_collateral(position_id: int, req: EditCollateralRequest):
+    """Increase or decrease collateral for an open margin position (requires TRADE permission)."""
+    if req.collateral <= 0:
+        raise HTTPException(status_code=400, detail="collateral must be greater than 0.")
+
+    client = get_nobitex_client()
+    try:
+        res = client.edit_position_collateral(position_id=position_id, collateral=req.collateral)
+        pos_obj = res.get("position") if isinstance(res, dict) else None
+        if isinstance(pos_obj, dict) and pos_obj.get("id"):
+            upsert_positions([pos_obj])
+        else:
+            try:
+                updated = client.fetch_position_status(position_id)
+                if updated:
+                    upsert_positions([updated])
+            except Exception:
+                pass
+        return {"status": "ok", "message": "وجه تضمین موقعیت با موفقیت به‌روزرسانی شد.", "result": res}
+    except Exception as e:
+        return _map_trade_action_error(e)
+
+
+@app.post("/api/orders/cancel-old")
+def api_cancel_old_orders(req: CancelOldOrdersRequest):
+    """Bulk-cancel active orders matching filters via POST /market/orders/cancel-old (TRADE permission)."""
+    if req.hours is not None and req.hours < 0:
+        raise HTTPException(status_code=400, detail="hours must be >= 0.")
+    if req.execution and req.execution.strip().lower() not in {"limit", "market", "stop_limit", "stop_market"}:
+        raise HTTPException(status_code=400, detail="Invalid execution filter.")
+    if req.trade_type and req.trade_type.strip().lower() not in {"spot", "margin"}:
+        raise HTTPException(status_code=400, detail="Invalid trade_type filter. Must be 'spot' or 'margin'.")
+
+    client = get_nobitex_client()
+    try:
+        res = client.cancel_old_orders(
+            hours=req.hours,
+            execution=req.execution,
+            trade_type=req.trade_type,
+            src_currency=req.src_currency,
+            dst_currency=req.dst_currency,
+        )
+        _invalidate_open_orders_cache()
+        return {"status": "ok", "message": "درخواست لغو گروهی سفارش‌ها با موفقیت ثبت شد.", "result": res}
+    except Exception as e:
+        return _map_trade_action_error(e)
+
+
+@app.get("/api/user/profile")
+def api_get_user_profile(refresh: bool = False):
+    """
+    Return user account level/VIP tier & API key configuration status (cached 6h in SQLite).
+    Works cleanly offline using cached metadata or public fallback.
+    """
+    client = get_nobitex_client()
+    has_keys = bool(client.api_key and client.secret)
+    cached_data, is_stale = get_metadata_cache("user_profile_tier_cache", ttl_seconds=21600.0)
+
+    if cached_data and not refresh and not is_stale:
+        return {**cached_data, "has_api_keys": has_keys, "cached": True}
+
+    if not has_keys:
+        return {
+            "has_api_keys": False,
+            "username": None,
+            "level": None,
+            "vip_level": None,
+            "limitations": {},
+            "cached": False,
+        }
+
+    profile: Dict[str, Any] = {}
+    limitations: Dict[str, Any] = {}
+    try:
+        profile = client.fetch_user_profile()
+    except Exception:
+        if cached_data:
+            return {**cached_data, "has_api_keys": has_keys, "cached": True}
+    try:
+        lim_res = client.fetch_user_limitations()
+        limitations = lim_res.get("limitations") if isinstance(lim_res.get("limitations"), dict) else lim_res
+    except Exception:
+        pass
+
+    user_level = (
+        limitations.get("userLevel")
+        if isinstance(limitations, dict) and limitations.get("userLevel") is not None
+        else profile.get("level")
+    )
+    vip_level = (
+        profile.get("vipLevel")
+        if profile.get("vipLevel") is not None
+        else (limitations.get("vipLevel") if isinstance(limitations, dict) else None)
+    )
+
+    payload = {
+        "has_api_keys": has_keys,
+        "username": profile.get("username") or profile.get("email"),
+        "level": user_level,
+        "vip_level": vip_level,
+        "limitations": limitations if isinstance(limitations, dict) else {},
+        "cached": False,
+    }
+    if profile or limitations:
+        set_metadata_json("user_profile_tier_cache", payload)
+    return payload
+
+
 # ==========================================
 # REAL-TIME LOCAL WEBSOCKET BRIDGE
 # ==========================================

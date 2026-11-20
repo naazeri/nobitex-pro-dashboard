@@ -56,6 +56,9 @@ ENDPOINT_RATE_LIMITS: Dict[str, Tuple[int, float, float]] = {
     "/users/portfolio/last-week-daily-total-profit": (9, 180.0, 2.0),  # Official: 10 / 3 min
     "/users/wallets/deposits/list": (18, 60.0, 1.0),                   # User deposits list
     "/users/wallets/withdraws/list": (18, 60.0, 1.0),                  # User withdrawals list
+    "/positions/{id}/close": (280, 600.0, 0.25),                       # Official: 300 / 10 min
+    "/positions/{id}/edit-collateral": (55, 60.0, 1.0),                # Official: 60 / min
+    "/users/limitations": (18, 60.0, 1.0),                             # User tier & limitations
 }
 
 _NUMERIC_SEGMENT_RE = re.compile(r"/\d+(?=/|$)")
@@ -956,3 +959,92 @@ class NobitexClient:
             timeout=15.0,
             max_retries=1,
         )
+
+    def close_position(
+        self,
+        position_id: int,
+        execution: str,
+        amount: Any,
+        price: Optional[Any] = None,
+        stop_price: Optional[Any] = None,
+        stop_limit_price: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        """
+        Submit a closing order for an open margin position via POST /positions/{positionId}/close.
+        Requires TRADE permission. Uses max_retries=0 to prevent duplicate order placement.
+        """
+        exec_norm = str(execution or "").strip().lower()
+        if exec_norm not in {"limit", "market", "stop_limit", "stop_market", "oco"}:
+            raise ValueError(f"Unsupported execution type: {execution}")
+        body_dict: Dict[str, Any] = {
+            "execution": exec_norm,
+            "amount": str(amount),
+        }
+        if price is not None:
+            body_dict["price"] = str(price)
+        if stop_price is not None:
+            body_dict["stopPrice"] = str(stop_price)
+        if stop_limit_price is not None:
+            body_dict["stopLimitPrice"] = str(stop_limit_price)
+        return self._request(
+            "POST",
+            f"/positions/{int(position_id)}/close",
+            body_dict=body_dict,
+            auth=True,
+            timeout=15.0,
+            max_retries=0,
+        )
+
+    def edit_position_collateral(self, position_id: int, collateral: Any) -> Dict[str, Any]:
+        """
+        Increase or decrease collateral of an open margin position via
+        POST /positions/{positionId}/edit-collateral (TRADE permission, max_retries=0).
+        """
+        body_dict = {"collateral": str(collateral)}
+        return self._request(
+            "POST",
+            f"/positions/{int(position_id)}/edit-collateral",
+            body_dict=body_dict,
+            auth=True,
+            timeout=15.0,
+            max_retries=0,
+        )
+
+    def cancel_old_orders(
+        self,
+        hours: Optional[float] = None,
+        execution: Optional[str] = None,
+        trade_type: Optional[str] = None,
+        src_currency: Optional[str] = None,
+        dst_currency: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Bulk-cancel active orders matching optional filters via POST /market/orders/cancel-old.
+        Requires TRADE permission. Rate limit: 30 req/min.
+        """
+        body_dict: Dict[str, Any] = {}
+        if hours is not None:
+            body_dict["hours"] = float(hours)
+        if execution:
+            body_dict["execution"] = str(execution).strip().lower()
+        if trade_type:
+            body_dict["tradeType"] = str(trade_type).strip().lower()
+        if src_currency:
+            body_dict["srcCurrency"] = str(src_currency).strip().lower()
+        if dst_currency:
+            body_dict["dstCurrency"] = str(dst_currency).strip().lower()
+        return self._request(
+            "POST",
+            "/market/orders/cancel-old",
+            body_dict=body_dict,
+            auth=True,
+            timeout=15.0,
+            max_retries=0,
+        )
+
+    def fetch_user_limitations(self) -> Dict[str, Any]:
+        """
+        Fetch user verification level, VIP tier, and deposit/withdraw limitations
+        via POST /users/limitations (READ permission).
+        """
+        return self._request("POST", "/users/limitations", auth=True, timeout=15.0)

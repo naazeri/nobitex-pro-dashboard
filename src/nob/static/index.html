@@ -148,9 +148,15 @@
           </svg>
         </div>
         <div>
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-2 flex-wrap">
             <h1 class="text-xl sm:text-2xl font-bold tracking-tight text-white">{{ t('appTitle') }}</h1>
             <span class="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 font-mono">{{ t('version') }}</span>
+            <span v-if="userProfile && userProfile.level !== null && userProfile.level !== undefined" class="text-[11px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/30 font-mono">
+              {{ t('userLevelBadge', { level: userProfile.level }) }}
+            </span>
+            <span v-if="userProfile && userProfile.vip_level" class="text-[11px] px-2 py-0.5 rounded-full bg-purple-500/15 text-purple-300 border border-purple-500/30 font-mono">
+              {{ t('userVipBadge', { vip: userProfile.vip_level }) }}
+            </span>
           </div>
           <p class="text-xs text-slate-400 mt-0.5 flex items-center gap-1.5 flex-wrap">
             <span>{{ t('lastSync') }}</span>
@@ -1264,6 +1270,12 @@
                   🚨 {{ t('radarDanger') }}: {{ t('radarDistance') }} < 10%
                 </span>
               </div>
+              <button
+                v-if="positionsSummary.highest_risk_position.risk_level === 'danger' || positionsSummary.highest_risk_position.risk_level === 'warning'"
+                @click="openCollateralModal(positionsSummary.highest_risk_position)"
+                class="mt-1.5 px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-[11px] font-bold transition cursor-pointer">
+                + {{ t('addCollateralBtn') }}
+              </button>
             </div>
 
           </div>
@@ -1441,6 +1453,7 @@
                   </div>
                 </th>
                 <th class="py-3 px-4 text-center whitespace-nowrap">{{ t('journalCol') }}</th>
+                <th class="py-3 px-4 text-center whitespace-nowrap">{{ t('colPosActions') }}</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-slate-800/60 font-mono text-xs sm:text-sm">
@@ -1533,6 +1546,20 @@
                     class="w-6 h-6 rounded-lg bg-slate-800/40 hover:bg-slate-800 text-slate-500 hover:text-indigo-400 inline-flex items-center justify-center transition cursor-pointer text-xs">
                     ✏️
                   </button>
+                </td>
+                <td class="py-3 px-4 text-center whitespace-nowrap">
+                  <div class="inline-flex items-center gap-1.5">
+                    <button
+                      @click="openCollateralModal(p)"
+                      class="px-2 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 text-[11px] font-semibold transition cursor-pointer">
+                      + {{ t('addCollateralBtn') }}
+                    </button>
+                    <button
+                      @click="openClosePosModal(p)"
+                      class="px-2 py-1 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 text-[11px] font-semibold transition cursor-pointer">
+                      {{ t('closePositionBtn') }}
+                    </button>
+                  </div>
                 </td>
               </tr>
             </tbody>
@@ -1912,6 +1939,13 @@
         </div>
 
         <div class="flex items-center gap-2 w-full sm:w-auto justify-end">
+          <button
+            v-if="openOrders.length > 0"
+            @click="openBulkCancelModal()"
+            class="px-3 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm">
+            <span>✕</span>
+            <span>{{ t('cancelFilteredOrdersBtn') }}</span>
+          </button>
           <button 
             @click="fetchOpenOrders(true)" 
             :disabled="openOrdersLoading"
@@ -3585,6 +3619,128 @@
     </div>
 
     <!-- ========================================== -->
+    <!-- EDIT COLLATERAL CONFIRMATION MODAL         -->
+    <!-- ========================================== -->
+    <div
+      v-if="isCollateralModalOpen && positionForAction"
+      class="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4"
+      @click.self="closeCollateralModal">
+      <div class="relative bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl max-w-md w-full text-slate-100 overflow-hidden">
+        <div class="px-5 py-4 border-b border-slate-800 bg-slate-950/60 flex items-center justify-between">
+          <div>
+            <h3 class="text-base font-bold text-white">{{ t('editCollateralTitle') }}</h3>
+            <p class="text-xs text-slate-400 mt-0.5">{{ t('editCollateralSubtitle') }}</p>
+          </div>
+          <button @click="closeCollateralModal" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center text-sm font-bold cursor-pointer">✕</button>
+        </div>
+        <div class="p-5 space-y-3 text-xs">
+          <div class="bg-slate-950/70 border border-slate-800/80 rounded-xl p-3 font-mono flex items-center justify-between">
+            <span class="text-slate-400 font-sans">{{ positionForAction.src_currency }}/{{ positionForAction.dst_currency }} ({{ positionForAction.leverage }}x)</span>
+            <span class="text-amber-300 font-bold">{{ t('currentCollateralLabel') }}: {{ positionForAction.collateral }} {{ positionForAction.dst_currency }}</span>
+          </div>
+          <div>
+            <label class="block text-slate-300 font-semibold mb-1">{{ t('newCollateralLabel') }} ({{ positionForAction.dst_currency }})</label>
+            <input type="number" step="any" min="0" v-model.number="collateralForm.collateral" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white font-mono text-sm focus:outline-none focus:border-amber-500" />
+          </div>
+          <div v-if="tradeActionError" class="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs">{{ tradeActionError }}</div>
+        </div>
+        <div class="px-5 py-4 border-t border-slate-800 bg-slate-950/40 flex items-center gap-3 justify-end">
+          <button type="button" @click="closeCollateralModal" class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs cursor-pointer">{{ t('keepOrder') }}</button>
+          <button type="button" @click="submitEditCollateral" :disabled="tradeActionLoading" class="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs cursor-pointer disabled:opacity-50">
+            {{ tradeActionLoading ? t('processingAction') : t('confirmEditCollateral') }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- CLOSE POSITION CONFIRMATION MODAL          -->
+    <!-- ========================================== -->
+    <div
+      v-if="isClosePosModalOpen && positionForAction"
+      class="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4"
+      @click.self="closeClosePosModal">
+      <div class="relative bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl max-w-md w-full text-slate-100 overflow-hidden">
+        <div class="px-5 py-4 border-b border-slate-800 bg-slate-950/60 flex items-center justify-between">
+          <div>
+            <h3 class="text-base font-bold text-white">{{ t('closePositionTitle') }}</h3>
+            <p class="text-xs text-slate-400 mt-0.5">{{ t('closePositionSubtitle') }}</p>
+          </div>
+          <button @click="closeClosePosModal" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center text-sm font-bold cursor-pointer">✕</button>
+        </div>
+        <div class="p-5 space-y-3 text-xs">
+          <div class="bg-slate-950/70 border border-slate-800/80 rounded-xl p-3 font-mono flex items-center justify-between">
+            <span class="font-bold text-white">{{ positionForAction.src_currency }}/{{ positionForAction.dst_currency }} (#{{ positionForAction.id }})</span>
+            <span class="text-amber-400">{{ positionForAction.leverage }}x</span>
+          </div>
+          <div>
+            <label class="block text-slate-300 font-semibold mb-1">{{ t('closeExecutionLabel') }}</label>
+            <select v-model="closePosForm.execution" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-xs">
+              <option value="market">Market</option>
+              <option value="limit">Limit</option>
+              <option value="stop_limit">Stop Limit</option>
+              <option value="stop_market">Stop Market</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-slate-300 font-semibold mb-1">{{ t('closeAmountLabel') }} ({{ positionForAction.src_currency }})</label>
+            <input type="number" step="any" min="0" v-model.number="closePosForm.amount" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white font-mono text-sm" />
+          </div>
+          <div v-if="closePosForm.execution === 'limit' || closePosForm.execution === 'stop_limit'">
+            <label class="block text-slate-300 font-semibold mb-1">{{ t('closePriceLabel') }}</label>
+            <input type="number" step="any" min="0" v-model.number="closePosForm.price" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white font-mono text-sm" />
+          </div>
+          <div v-if="closePosForm.execution === 'stop_limit' || closePosForm.execution === 'stop_market'">
+            <label class="block text-slate-300 font-semibold mb-1">{{ t('closeStopPriceLabel') }}</label>
+            <input type="number" step="any" min="0" v-model.number="closePosForm.stop_price" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white font-mono text-sm" />
+          </div>
+          <div v-if="tradeActionError" class="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs">{{ tradeActionError }}</div>
+        </div>
+        <div class="px-5 py-4 border-t border-slate-800 bg-slate-950/40 flex items-center gap-3 justify-end">
+          <button type="button" @click="closeClosePosModal" class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs cursor-pointer">{{ t('keepOrder') }}</button>
+          <button type="button" @click="submitClosePosition" :disabled="tradeActionLoading" class="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs cursor-pointer disabled:opacity-50">
+            {{ tradeActionLoading ? t('processingAction') : t('confirmClosePosition') }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- BULK CANCEL ORDERS CONFIRMATION MODAL      -->
+    <!-- ========================================== -->
+    <div
+      v-if="isBulkCancelModalOpen"
+      class="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4"
+      @click.self="closeBulkCancelModal">
+      <div class="relative bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl max-w-md w-full text-slate-100 overflow-hidden">
+        <div class="px-5 py-4 border-b border-slate-800 bg-slate-950/60 flex items-center justify-between">
+          <div>
+            <h3 class="text-base font-bold text-white">{{ t('bulkCancelTitle') }}</h3>
+            <p class="text-xs text-slate-400 mt-0.5">{{ t('bulkCancelSubtitle') }}</p>
+          </div>
+          <button @click="closeBulkCancelModal" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center text-sm font-bold cursor-pointer">✕</button>
+        </div>
+        <div class="p-5 space-y-3 text-xs">
+          <div class="bg-slate-950/70 border border-slate-800/80 rounded-xl p-3 font-mono flex items-center justify-between">
+            <span class="text-slate-400 font-sans">{{ t('bulkCancelScopeLabel') }}:</span>
+            <span class="text-white font-bold uppercase">{{ bulkCancelForm.trade_type || 'ALL' }}</span>
+          </div>
+          <div>
+            <label class="block text-slate-300 font-semibold mb-1">{{ t('bulkCancelHoursLabel') }}</label>
+            <input type="number" step="any" min="0" v-model="bulkCancelForm.hours" placeholder="e.g. 2" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white font-mono text-sm" />
+          </div>
+          <div v-if="tradeActionError" class="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs">{{ tradeActionError }}</div>
+        </div>
+        <div class="px-5 py-4 border-t border-slate-800 bg-slate-950/40 flex items-center gap-3 justify-end">
+          <button type="button" @click="closeBulkCancelModal" class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs cursor-pointer">{{ t('keepOrder') }}</button>
+          <button type="button" @click="submitBulkCancelOrders" :disabled="tradeActionLoading" class="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs cursor-pointer disabled:opacity-50">
+            {{ tradeActionLoading ? t('processingAction') : t('confirmBulkCancel') }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========================================== -->
     <!-- TRADING JOURNAL & NOTES MODAL              -->
     <!-- ========================================== -->
     <div 
@@ -4276,6 +4432,160 @@
             cancelErrorMsg.value = e.message || t('orderCancelError');
           } finally {
             cancelLoading.value = false;
+          }
+        }
+
+        // Phase 11: User Profile Tier & Advanced Margin / Bulk Cancel Actions
+        const userProfile = ref(null);
+        const isCollateralModalOpen = ref(false);
+        const isClosePosModalOpen = ref(false);
+        const isBulkCancelModalOpen = ref(false);
+        const positionForAction = ref(null);
+        const collateralForm = reactive({ collateral: 0 });
+        const closePosForm = reactive({ execution: 'market', amount: 0, price: null, stop_price: null });
+        const bulkCancelForm = reactive({ hours: '', trade_type: '' });
+        const tradeActionLoading = ref(false);
+        const tradeActionError = ref('');
+
+        async function fetchUserProfile() {
+          try {
+            const resp = await fetch('/api/user/profile');
+            if (resp.ok) {
+              userProfile.value = await resp.json();
+            }
+          } catch (e) {}
+        }
+
+        function openCollateralModal(pos) {
+          positionForAction.value = pos;
+          collateralForm.collateral = Number(pos?.collateral || 0);
+          tradeActionError.value = '';
+          isCollateralModalOpen.value = true;
+        }
+        function closeCollateralModal() {
+          isCollateralModalOpen.value = false;
+          positionForAction.value = null;
+          tradeActionError.value = '';
+        }
+        async function submitEditCollateral() {
+          if (!positionForAction.value) return;
+          tradeActionLoading.value = true;
+          tradeActionError.value = '';
+          try {
+            const resp = await fetch(`/api/positions/${positionForAction.value.id}/edit-collateral`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ collateral: Number(collateralForm.collateral) }),
+            });
+            const data = await resp.json();
+            if (resp.ok && data.status === 'ok') {
+              closeCollateralModal();
+              await fetchPositions();
+            } else if (resp.status === 403 || data.code === 'TradePermissionRequired') {
+              tradeActionError.value = t('tradePermissionRequired');
+            } else {
+              tradeActionError.value = data.detail || data.message || 'Error updating collateral';
+            }
+          } catch (e) {
+            tradeActionError.value = e.message || 'Network error';
+          } finally {
+            tradeActionLoading.value = false;
+          }
+        }
+
+        function openClosePosModal(pos) {
+          positionForAction.value = pos;
+          const collat = Number(pos?.collateral || 0);
+          const lev = Number(pos?.leverage || 1);
+          const entry = Number(pos?.entry_price || 0);
+          const estAmt = entry > 0 ? Number(((collat * lev) / entry).toFixed(6)) : 0;
+          closePosForm.execution = 'market';
+          closePosForm.amount = estAmt;
+          closePosForm.price = Number(pos?.mark_price || entry || 0) || null;
+          closePosForm.stop_price = null;
+          tradeActionError.value = '';
+          isClosePosModalOpen.value = true;
+        }
+        function closeClosePosModal() {
+          isClosePosModalOpen.value = false;
+          positionForAction.value = null;
+          tradeActionError.value = '';
+        }
+        async function submitClosePosition() {
+          if (!positionForAction.value) return;
+          tradeActionLoading.value = true;
+          tradeActionError.value = '';
+          try {
+            const payload = {
+              execution: closePosForm.execution,
+              amount: Number(closePosForm.amount),
+            };
+            if (closePosForm.execution === 'limit' || closePosForm.execution === 'stop_limit') {
+              payload.price = Number(closePosForm.price);
+            }
+            if (closePosForm.execution === 'stop_limit' || closePosForm.execution === 'stop_market') {
+              payload.stop_price = Number(closePosForm.stop_price);
+            }
+            const resp = await fetch(`/api/positions/${positionForAction.value.id}/close`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            });
+            const data = await resp.json();
+            if (resp.ok && data.status === 'ok') {
+              closeClosePosModal();
+              await fetchPositions();
+              await fetchOpenOrders(true);
+            } else if (resp.status === 403 || data.code === 'TradePermissionRequired') {
+              tradeActionError.value = t('tradePermissionRequired');
+            } else {
+              tradeActionError.value = data.detail || data.message || 'Error closing position';
+            }
+          } catch (e) {
+            tradeActionError.value = e.message || 'Network error';
+          } finally {
+            tradeActionLoading.value = false;
+          }
+        }
+
+        function openBulkCancelModal() {
+          const f = String(openOrdersFilter.value || 'all').toLowerCase();
+          bulkCancelForm.trade_type = (f === 'spot' || f === 'margin') ? f : '';
+          bulkCancelForm.hours = '';
+          tradeActionError.value = '';
+          isBulkCancelModalOpen.value = true;
+        }
+        function closeBulkCancelModal() {
+          isBulkCancelModalOpen.value = false;
+          tradeActionError.value = '';
+        }
+        async function submitBulkCancelOrders() {
+          tradeActionLoading.value = true;
+          tradeActionError.value = '';
+          try {
+            const payload = {};
+            if (bulkCancelForm.trade_type) payload.trade_type = bulkCancelForm.trade_type;
+            if (bulkCancelForm.hours !== '' && bulkCancelForm.hours !== null && Number(bulkCancelForm.hours) >= 0) {
+              payload.hours = Number(bulkCancelForm.hours);
+            }
+            const resp = await fetch('/api/orders/cancel-old', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            });
+            const data = await resp.json();
+            if (resp.ok && data.status === 'ok') {
+              closeBulkCancelModal();
+              await fetchOpenOrders(true);
+            } else if (resp.status === 403 || data.code === 'TradePermissionRequired') {
+              tradeActionError.value = t('tradePermissionRequired');
+            } else {
+              tradeActionError.value = data.detail || data.message || 'Error canceling orders';
+            }
+          } catch (e) {
+            tradeActionError.value = e.message || 'Network error';
+          } finally {
+            tradeActionLoading.value = false;
           }
         }
 
@@ -5873,8 +6183,9 @@
             nextTick(() => renderCharts());
           }
 
-          // 1. Connect to local backend WebSocket bridge (ADR-012 compliant)
+          // 1. Connect to local backend WebSocket bridge (ADR-012 compliant) & load user tier badge
           connectLocalWebSocket();
+          fetchUserProfile();
 
           // 2. Auto-trigger sync on page open (per user request)
           triggerSync();
@@ -7043,6 +7354,25 @@
           openCancelModal,
           closeCancelModal,
           confirmCancelOrder,
+          userProfile,
+          isCollateralModalOpen,
+          isClosePosModalOpen,
+          isBulkCancelModalOpen,
+          positionForAction,
+          collateralForm,
+          closePosForm,
+          bulkCancelForm,
+          tradeActionLoading,
+          tradeActionError,
+          openCollateralModal,
+          closeCollateralModal,
+          submitEditCollateral,
+          openClosePosModal,
+          closeClosePosModal,
+          submitClosePosition,
+          openBulkCancelModal,
+          closeBulkCancelModal,
+          submitBulkCancelOrders,
 
           // Chart exports
           chartSymbol,

@@ -40,7 +40,7 @@ Phase 1 (DB WAL, Lifespan, IRST Timezone)
 | **Phase 8** ✅ | Monetary Precision Migration (`float` → `Decimal`) | `OPT-02` | Isolated (regression-sensitive) | Medium (Done) |
 | **Phase 9** ✅ | Real-Time WebSocket Bridge (Backend Centrifugo → Local WS) | `OPT-03` | Isolated (new subsystem) | High (Done) |
 | **Phase 10** ✅ | True Equity Curve & Cashflow Reconciliation | `OPT-04` | Isolated (new tables + TWR math) | Medium (Done) |
-| **Phase 11** | Margin Position Actions, Bulk Cancel & User Tier UI | `OPT-05` | Isolated (optional `TRADE` UX) | Medium |
+| **Phase 11** ✅ | Margin Position Actions, Bulk Cancel & User Tier UI | `OPT-05` | Isolated (optional `TRADE` UX) | Medium (Done) |
 
 ---
 
@@ -345,7 +345,7 @@ Phase 1 (DB WAL, Lifespan, IRST Timezone)
 
 ---
 
-## Phase 11: Advanced Margin Actions, Bulk Cancel & Account Tier Badge
+## Phase 11: Advanced Margin Actions, Bulk Cancel & Account Tier Badge ✅ (Completed)
 **Covers:** `OPT-05`  
 **Why isolated:** Optional interactive trading actions requiring `TRADE` permission (must remain cleanly gated for `READ`-only users).
 
@@ -356,18 +356,18 @@ Phase 1 (DB WAL, Lifespan, IRST Timezone)
 - `src/nob/static/i18n.js`
 
 ### Tasks
-- [ ] Add `NobitexClient` methods:
+- [x] Add `NobitexClient` methods:
   - `close_position(position_id, execution, amount, price=None, stop_price=None, stop_limit_price=None)` → `POST /positions/{positionId}/close`
   - `edit_position_collateral(position_id, collateral)` → `POST /positions/{positionId}/edit-collateral`
   - `cancel_old_orders(hours=None, execution=None, trade_type=None, src_currency=None, dst_currency=None)` → `POST /market/orders/cancel-old`
   - `fetch_user_limitations()` → `POST /users/limitations`
-- [ ] Expose FastAPI endpoints (`/api/positions/{id}/close`, `/api/positions/{id}/edit-collateral`, `/api/orders/cancel-old`, `/api/user/profile`) with strict Pydantic validation and `NobitexAuthError` → `403` handling.
-- [ ] Add confirmation modals in `index.html` + bilingual strings in `i18n.js` for:
-  - "Add Collateral" quick button on Danger/Warning positions in Liquidation Risk Radar.
+- [x] Expose FastAPI endpoints (`/api/positions/{id}/close`, `/api/positions/{id}/edit-collateral`, `/api/orders/cancel-old`, `/api/user/profile`) with strict Pydantic validation and `NobitexAuthError` → `403` handling.
+- [x] Add confirmation modals in `index.html` + bilingual strings in `i18n.js` for:
+  - "Add Collateral" quick button on Danger/Warning positions in Liquidation Risk Radar & active positions table.
   - "Close Position" button on active positions.
-  - "Cancel All Filtered Orders" button in Open Orders tab.
-  - User VIP tier & API key permission badge in the top header.
+  - "Cancel Filtered Orders" button in Open Orders tab.
+  - User level / VIP tier badge in the top header.
 
 ### Verification & Acceptance Criteria
-- [ ] All mutating actions require explicit confirmation modal before firing.
-- [ ] Using a `READ`-only API key displays a clear bilingual message explaining `TRADE` permission is required, with zero crashes or retries.
+- [x] All mutating actions require explicit confirmation modal before firing.
+- [x] Using a `READ`-only API key displays a clear bilingual message explaining `TRADE` permission is required, with zero crashes or retries.
