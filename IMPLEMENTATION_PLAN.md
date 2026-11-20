@@ -37,7 +37,7 @@ Phase 1 (DB WAL, Lifespan, IRST Timezone)
 | **Phase 5** ✅ | Spot Portfolio WAC Replay, `-RLS` Markets & Margin Wallets | `BUG-03`, `BUG-04` (SQL) | Isolated (financial core) | Medium (Done) |
 | **Phase 6** ✅ | Chart UDF 500-Bar Pagination, 7-Day Clamp & Cache | `API-04` | Isolated (charting subsystem) | Low (Done) |
 | **Phase 7** ✅ | Dynamic Market Metadata (`/margin/markets/list`, `/v2/options`) | `OPT-01` | Isolated (metadata layer) | Low (Done) |
-| **Phase 8** | Monetary Precision Migration (`float` → `Decimal`) | `OPT-02` | Isolated (regression-sensitive) | Medium |
+| **Phase 8** ✅ | Monetary Precision Migration (`float` → `Decimal`) | `OPT-02` | Isolated (regression-sensitive) | Medium (Done) |
 | **Phase 9** | Real-Time WebSocket Bridge (Backend Centrifugo → Local WS) | `OPT-03` | Isolated (new subsystem) | High |
 | **Phase 10** | True Equity Curve & Cashflow Reconciliation | `OPT-04` | Isolated (new tables + TWR math) | Medium |
 | **Phase 11** | Margin Position Actions, Bulk Cancel & User Tier UI | `OPT-05` | Isolated (optional `TRADE` UX) | Medium |
@@ -271,7 +271,7 @@ Phase 1 (DB WAL, Lifespan, IRST Timezone)
 
 ---
 
-## Phase 8: Monetary Precision Migration (`float` → `Decimal`)
+## Phase 8: Monetary Precision Migration (`float` → `Decimal`) ✅ (Completed)
 **Covers:** `OPT-02`  
 **Why isolated:** Pure internal precision refactor; isolating it makes regression testing against existing `data/portfolio.db` exact and unambiguous.
 
@@ -279,13 +279,13 @@ Phase 1 (DB WAL, Lifespan, IRST Timezone)
 - `src/nob/pnl.py`
 
 ### Tasks
-- [ ] Create helper `D(val, default="0") -> Decimal` safely parsing strings/numbers via `Decimal(str(val))` (handling `None`, `""`, `NaN`).
-- [ ] Convert WAC (`current_qty`, `avg_cost`, `net_amount`, `realized_pnl`, `unrealized_pnl`, fees) in `calculate_portfolio()` and `calculate_daily_pnl_calendar()` to `Decimal` arithmetic.
-- [ ] Convert margin fee and True Net PnL arithmetic in `calculate_positions_summary()` to `Decimal`.
-- [ ] Quantize/convert back to `float` only at the final JSON response dictionary assembly so API contracts remain 100% backward-compatible.
+- [x] Create helper `D(val, default="0") -> Decimal` safely parsing strings/numbers via `Decimal(str(val))` (handling `None`, `""`, `NaN`).
+- [x] Convert WAC (`current_qty`, `avg_cost`, `net_amount`, `realized_pnl`, `unrealized_pnl`, fees) in `calculate_portfolio()` and `calculate_daily_pnl_calendar()` to `Decimal` arithmetic.
+- [x] Convert margin fee and True Net PnL arithmetic in `calculate_positions_summary()` to `Decimal`.
+- [x] Quantize/convert back to `float` only at the final JSON response dictionary assembly so API contracts remain 100% backward-compatible.
 
 ### Verification & Acceptance Criteria
-- [ ] Snapshot-compare JSON outputs of `/api/portfolio`, `/api/positions`, and `/api/analytics/pnl-calendar` before and after migration on `data/portfolio.db` — confirm zero unexpected deltas and improved precision on micro-priced tokens (`SHIB`, `PEPE`, `DOGS`).
+- [x] Snapshot-compare JSON outputs of `/api/portfolio`, `/api/positions`, and `/api/analytics/pnl-calendar` before and after migration on `data/portfolio.db` — confirm zero unexpected deltas and improved precision on micro-priced tokens (`SHIB`, `PEPE`, `DOGS`).
 
 ---
 

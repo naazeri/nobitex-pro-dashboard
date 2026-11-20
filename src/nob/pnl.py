@@ -1,10 +1,53 @@
 import datetime
-from typing import List, Dict, Any, Optional
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from typing import List, Dict, Any, Optional, Tuple
 from collections import defaultdict
 
 from nob.time_utils import IRST, iso_to_irst_date_str
 
 TEHRAN_TZ = IRST
+
+ZERO = Decimal("0")
+ONE = Decimal("1")
+TEN = Decimal("10")
+HUNDRED = Decimal("100")
+EPSILON_QTY = Decimal("1e-9")
+EPSILON_PNL = Decimal("0.001")
+EPSILON_DAY = Decimal("0.005")
+EPSILON_ALLOC = Decimal("0.01")
+
+
+def D(val: Any, default: str = "0") -> Decimal:
+    """
+    Safely parse any value (str, int, float, Decimal, None) into a finite Decimal.
+    Falls back to Decimal(default) for None, empty strings, NaN, or Infinity.
+    """
+    if isinstance(val, Decimal):
+        return val if val.is_finite() else Decimal(default)
+    if val is None or val == "":
+        return Decimal(default)
+    try:
+        d = Decimal(str(val).strip())
+        return d if d.is_finite() else Decimal(default)
+    except (InvalidOperation, ValueError, TypeError):
+        return Decimal(default)
+
+
+def _round_dec(val: Decimal, places: int = 2) -> Decimal:
+    """Round a Decimal to `places` decimal places using standard financial half-up rounding."""
+    if not val.is_finite():
+        return ZERO
+    if places <= 0:
+        return val.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    fmt = Decimal("1." + ("0" * places))
+    return val.quantize(fmt, rounding=ROUND_HALF_UP)
+
+
+def _to_float(val: Decimal, places: Optional[int] = None) -> float:
+    """Convert Decimal to float at JSON serialization boundary, optionally quantized."""
+    if places is not None:
+        return float(_round_dec(val, places))
+    return float(val)
 
 
 def to_tehran_date_str(timestamp_str: str) -> str:
@@ -12,37 +55,38 @@ def to_tehran_date_str(timestamp_str: str) -> str:
     return iso_to_irst_date_str(timestamp_str)
 
 
-def _get_usdt_rls_rate(market_stats: Optional[Dict[str, Any]]) -> float:
-    """Return live USDT-RLS price from market_stats, or 0.0 if unavailable."""
+def _get_usdt_rls_rate(market_stats: Optional[Dict[str, Any]]) -> Decimal:
+    """Return live USDT-RLS price as Decimal from market_stats, or ZERO if unavailable."""
     if not market_stats:
-        return 0.0
+        return ZERO
     for key in ("usdt-rls", "usdtrls", "USDT-RLS"):
         entry = market_stats.get(key)
         if isinstance(entry, dict):
-            try:
-                val = float(entry.get("latest", 0.0) or 0.0)
-                if val > 0:
-                    return val
-            except (ValueError, TypeError):
-                continue
-    return 0.0
+            val = D(entry.get("latest"))
+            if val > ZERO:
+                return val
+    return ZERO
 
 
-def _convert_quote_to_usdt(value: float, quote: str, usdt_rls_rate: float) -> tuple[Optional[float], bool]:
+def _convert_quote_to_usdt(
+    value: Decimal,
+    quote: str,
+    usdt_rls_rate: Decimal,
+) -> Tuple[Optional[Decimal], bool]:
     """
-    Convert a price/total/fee denominated in quote currency to USDT.
+    Convert a price/total/fee denominated in quote currency to USDT using Decimal arithmetic.
     Returns (usdt_value, is_approximate_rls_conversion).
     """
     q = (quote or "").upper()
     if q == "USDT":
         return value, False
     if q in ("RLS", "IRR"):
-        if usdt_rls_rate > 0:
+        if usdt_rls_rate > ZERO:
             return value / usdt_rls_rate, True
         return None, True
     if q == "IRT":
-        if usdt_rls_rate > 0:
-            return value / (usdt_rls_rate / 10.0), True
+        if usdt_rls_rate > ZERO:
+            return value / (usdt_rls_rate / TEN), True
         return None, True
     return None, False
 
@@ -56,7 +100,7 @@ def calculate_portfolio(
     since_date: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Calculate spot portfolio metrics in USDT using Weighted Average Cost (WAC).
+    Calculate spot portfolio metrics in USDT using exact Decimal Weighted Average Cost (WAC).
 
     Key Guarantees:
     - Full-History WAC Replay: Always replays full chronological history to build
@@ -117,33 +161,30 @@ def calculate_portfolio(
     all_symbols = set(trades_by_symbol.keys())
     for curr, w in spot_wallet_map.items():
         if curr not in {"RLS", "USDT", "DAI", "IRR", "IRT"}:
-            try:
-                if float(w.get("balance", 0.0)) > 0:
-                    all_symbols.add(curr)
-            except (ValueError, TypeError):
-                pass
+            if D(w.get("balance")) > ZERO:
+                all_symbols.add(curr)
 
     holdings: Dict[str, Dict[str, Any]] = {}
-    total_realized_pnl = 0.0
-    total_unrealized_pnl = 0.0
-    total_fees_usdt = 0.0
-    total_crypto_value = 0.0
-    total_invested_capital = 0.0
+    total_realized_pnl = ZERO
+    total_unrealized_pnl = ZERO
+    total_fees_usdt = ZERO
+    total_crypto_value = ZERO
+    total_invested_capital = ZERO
 
-    trades_timeline = defaultdict(lambda: {"buys": 0, "sells": 0, "volume": 0.0})
+    trades_timeline = defaultdict(lambda: {"buys": 0, "sells": 0, "volume": ZERO})
 
     for symbol in sorted(all_symbols):
         symbol_trades = trades_by_symbol.get(symbol, [])
         symbol_trades.sort(key=lambda x: str(x.get("timestamp", "")))
 
-        current_qty = 0.0
-        avg_cost = 0.0
-        realized_pnl = 0.0
-        asset_fees_usdt = 0.0
-        total_bought_qty = 0.0
-        total_bought_cost = 0.0
-        total_sold_qty = 0.0
-        total_sold_revenue = 0.0
+        current_qty = ZERO
+        avg_cost = ZERO
+        realized_pnl = ZERO
+        asset_fees_usdt = ZERO
+        total_bought_qty = ZERO
+        total_bought_cost = ZERO
+        total_sold_qty = ZERO
+        total_sold_revenue = ZERO
         in_range_trades_count = 0
         used_approx_rls = False
 
@@ -151,13 +192,11 @@ def calculate_portfolio(
             trade_type = str(t.get("type", "")).lower()
             market = str(t.get("market", "")).upper()
             quote = market.split("-", 1)[1] if "-" in market else "USDT"
-            try:
-                raw_price = float(t.get("price", 0.0))
-                amount = float(t.get("amount", 0.0))
-                raw_total = float(t.get("total", 0.0))
-                fee_raw = float(t.get("fee", 0.0))
-            except (ValueError, TypeError):
-                continue
+
+            raw_price = D(t.get("price"))
+            amount = D(t.get("amount"))
+            raw_total = D(t.get("total"))
+            fee_raw = D(t.get("fee"))
 
             price, approx_p = _convert_quote_to_usdt(raw_price, quote, usdt_rls_rate)
             total, approx_t = _convert_quote_to_usdt(raw_total, quote, usdt_rls_rate)
@@ -172,11 +211,12 @@ def calculate_portfolio(
             if trade_type == "buy":
                 # Buy fee is charged in base cryptocurrency; convert to USDT using trade price
                 fee_usdt = fee_raw * price
-                net_amount = max(0.0, amount - fee_raw)
+                net_amount = max(ZERO, amount - fee_raw)
 
                 # Always replay WAC from full history
-                if current_qty + net_amount > 0:
-                    avg_cost = ((current_qty * avg_cost) + total) / (current_qty + net_amount)
+                denom = current_qty + net_amount
+                if denom > ZERO:
+                    avg_cost = ((current_qty * avg_cost) + total) / denom
                 current_qty += net_amount
 
                 if in_window:
@@ -191,20 +231,20 @@ def calculate_portfolio(
             elif trade_type == "sell":
                 # Sell fee is charged in quote currency; convert to USDT
                 fee_usdt_opt, _ = _convert_quote_to_usdt(fee_raw, quote, usdt_rls_rate)
-                fee_usdt = fee_usdt_opt if fee_usdt_opt is not None else 0.0
+                fee_usdt = fee_usdt_opt if fee_usdt_opt is not None else ZERO
 
                 # Always replay inventory against full history
                 matched_qty = min(current_qty, amount)
-                trade_pnl = 0.0
-                if matched_qty > 0 and avg_cost > 0:
+                trade_pnl = ZERO
+                if matched_qty > ZERO and avg_cost > ZERO:
                     matched_cost = matched_qty * avg_cost
                     matched_revenue = matched_qty * price
-                    prop_fee = fee_usdt * (matched_qty / amount) if amount > 0 else 0.0
+                    prop_fee = (fee_usdt * (matched_qty / amount)) if amount > ZERO else ZERO
                     trade_pnl = matched_revenue - matched_cost - prop_fee
                     current_qty -= matched_qty
-                    if current_qty <= 1e-9:
-                        current_qty = 0.0
-                        avg_cost = 0.0
+                    if current_qty <= EPSILON_QTY:
+                        current_qty = ZERO
+                        avg_cost = ZERO
 
                 if in_window:
                     asset_fees_usdt += fee_usdt
@@ -219,15 +259,14 @@ def calculate_portfolio(
         # Check actual spot wallet balance if available
         wallet_entry = spot_wallet_map.get(symbol)
         if wallet_entry is not None:
-            try:
-                wallet_balance = float(wallet_entry.get("balance", 0.0))
-                active_balance = float(wallet_entry.get("activeBalance", wallet_entry.get("active_balance", wallet_balance)))
-            except (ValueError, TypeError):
-                wallet_balance = current_qty
-                active_balance = current_qty
+            wallet_balance = D(wallet_entry.get("balance"))
+            active_balance = D(
+                wallet_entry.get("activeBalance", wallet_entry.get("active_balance")),
+                default=str(wallet_balance),
+            )
         elif spot_wallet_map:
-            wallet_balance = 0.0
-            active_balance = 0.0
+            wallet_balance = ZERO
+            active_balance = ZERO
         else:
             wallet_balance = current_qty
             active_balance = current_qty
@@ -235,44 +274,35 @@ def calculate_portfolio(
         holding_qty = wallet_balance
 
         # When a date filter is active, omit completely inactive 0-balance symbols
-        if has_date_filter and holding_qty <= 1e-9 and in_range_trades_count == 0:
+        if has_date_filter and holding_qty <= EPSILON_QTY and in_range_trades_count == 0:
             continue
 
         # Look up current market price in USDT (fallback to RLS converted if USDT pair absent)
         market_key = f"{symbol}-usdt".lower()
         stat = market_stats.get(market_key, {})
-        try:
-            current_price = float(stat.get("latest", 0.0))
-            day_change = float(stat.get("dayChange", 0.0))
-            day_high = float(stat.get("dayHigh", 0.0))
-            day_low = float(stat.get("dayLow", 0.0))
-        except (ValueError, TypeError):
-            current_price = 0.0
-            day_change = 0.0
-            day_high = 0.0
-            day_low = 0.0
+        current_price = D(stat.get("latest"))
+        day_change = D(stat.get("dayChange"))
+        day_high = D(stat.get("dayHigh"))
+        day_low = D(stat.get("dayLow"))
 
-        if current_price <= 0 and usdt_rls_rate > 0:
+        if current_price <= ZERO and usdt_rls_rate > ZERO:
             rls_stat = market_stats.get(f"{symbol}-rls".lower(), {})
-            try:
-                rls_latest = float(rls_stat.get("latest", 0.0))
-                if rls_latest > 0:
-                    current_price = rls_latest / usdt_rls_rate
-                    day_change = float(rls_stat.get("dayChange", 0.0))
-                    day_high = float(rls_stat.get("dayHigh", 0.0)) / usdt_rls_rate
-                    day_low = float(rls_stat.get("dayLow", 0.0)) / usdt_rls_rate
-            except (ValueError, TypeError):
-                pass
+            rls_latest = D(rls_stat.get("latest"))
+            if rls_latest > ZERO:
+                current_price = rls_latest / usdt_rls_rate
+                day_change = D(rls_stat.get("dayChange"))
+                day_high = D(rls_stat.get("dayHigh")) / usdt_rls_rate
+                day_low = D(rls_stat.get("dayLow")) / usdt_rls_rate
 
         current_value = holding_qty * current_price
 
         # Unrealized PnL (USDT)
-        if holding_qty > 0 and avg_cost > 0 and current_price > 0:
+        if holding_qty > ZERO and avg_cost > ZERO and current_price > ZERO:
             unrealized_pnl = (current_price - avg_cost) * holding_qty
-            pnl_pct = ((current_price - avg_cost) / avg_cost) * 100.0
+            pnl_pct = ((current_price - avg_cost) / avg_cost) * HUNDRED
         else:
-            unrealized_pnl = 0.0
-            pnl_pct = 0.0
+            unrealized_pnl = ZERO
+            pnl_pct = ZERO
 
         asset_total_pnl = realized_pnl + unrealized_pnl
 
@@ -280,65 +310,56 @@ def calculate_portfolio(
         total_unrealized_pnl += unrealized_pnl
         total_fees_usdt += asset_fees_usdt
         total_crypto_value += current_value
-        if holding_qty > 0 and avg_cost > 0:
-            total_invested_capital += (holding_qty * avg_cost)
+        if holding_qty > ZERO and avg_cost > ZERO:
+            total_invested_capital += holding_qty * avg_cost
 
         holdings[symbol] = {
             "symbol": symbol,
             "market": f"{symbol}-USDT",
-            "quantity": holding_qty,
-            "active_quantity": active_balance,
-            "avg_cost": avg_cost,
-            "current_price": current_price,
-            "current_value": current_value,
-            "realized_pnl": realized_pnl,
-            "unrealized_pnl": unrealized_pnl,
-            "total_pnl": asset_total_pnl,
-            "pnl_pct": pnl_pct,
-            "day_change": day_change,
-            "day_high": day_high,
-            "day_low": day_low,
-            "fees_paid_usdt": asset_fees_usdt,
+            "quantity": _to_float(holding_qty),
+            "active_quantity": _to_float(active_balance),
+            "avg_cost": _to_float(avg_cost),
+            "current_price": _to_float(current_price),
+            "current_value": _to_float(current_value),
+            "realized_pnl": _to_float(realized_pnl),
+            "unrealized_pnl": _to_float(unrealized_pnl),
+            "total_pnl": _to_float(asset_total_pnl),
+            "pnl_pct": _to_float(pnl_pct),
+            "day_change": _to_float(day_change),
+            "day_high": _to_float(day_high),
+            "day_low": _to_float(day_low),
+            "fees_paid_usdt": _to_float(asset_fees_usdt),
             "trades_count": in_range_trades_count,
-            "total_bought_qty": total_bought_qty,
-            "total_bought_cost": total_bought_cost,
-            "total_sold_qty": total_sold_qty,
-            "total_sold_revenue": total_sold_revenue,
-            "is_dust": current_value < 1.0,
+            "total_bought_qty": _to_float(total_bought_qty),
+            "total_bought_cost": _to_float(total_bought_cost),
+            "total_sold_qty": _to_float(total_sold_qty),
+            "total_sold_revenue": _to_float(total_sold_revenue),
+            "is_dust": current_value < ONE,
             "approximate_rls_conversion": used_approx_rls,
         }
 
     # Spot USDT & DAI cash reserves
     usdt_wallet = spot_wallet_map.get("USDT", {})
-    try:
-        usdt_cash = float(usdt_wallet.get("balance", 0.0))
-    except (ValueError, TypeError):
-        usdt_cash = 0.0
+    usdt_cash = D(usdt_wallet.get("balance"))
 
     dai_wallet = spot_wallet_map.get("DAI", {})
-    try:
-        dai_cash = float(dai_wallet.get("balance", 0.0))
-    except (ValueError, TypeError):
-        dai_cash = 0.0
+    dai_cash = D(dai_wallet.get("balance"))
 
     # Margin USDT cash (active_balance = free margin USDT, avoiding double-counting locked collateral)
     margin_usdt_wallet = margin_wallet_map.get("USDT", {})
-    try:
-        margin_usdt_total = float(margin_usdt_wallet.get("balance", 0.0))
-        margin_usdt_cash = float(
-            margin_usdt_wallet.get("active_balance", margin_usdt_wallet.get("activeBalance", margin_usdt_total))
-        )
-    except (ValueError, TypeError):
-        margin_usdt_total = 0.0
-        margin_usdt_cash = 0.0
+    margin_usdt_total = D(margin_usdt_wallet.get("balance"))
+    margin_usdt_cash = D(
+        margin_usdt_wallet.get("active_balance", margin_usdt_wallet.get("activeBalance")),
+        default=str(margin_usdt_total),
+    )
 
     total_portfolio_value = total_crypto_value + usdt_cash + dai_cash
     total_pnl = total_realized_pnl + total_unrealized_pnl
 
     overall_pnl_pct = (
-        (total_pnl / total_invested_capital * 100.0)
-        if total_invested_capital > 0
-        else 0.0
+        (total_pnl / total_invested_capital * HUNDRED)
+        if total_invested_capital > ZERO
+        else ZERO
     )
 
     active_holdings = [h for h in holdings.values() if h["current_value"] >= 1.0]
@@ -348,10 +369,10 @@ def calculate_portfolio(
     worst_performer = min(active_holdings, key=lambda x: x["pnl_pct"]) if active_holdings else None
 
     allocation_items = []
-    if usdt_cash > 0.01:
+    if usdt_cash > EPSILON_ALLOC:
         allocation_items.append({
             "symbol": "USDT",
-            "value": round(usdt_cash, 2),
+            "value": _to_float(usdt_cash, 2),
             "color": "#10b981",
         })
 
@@ -362,22 +383,22 @@ def calculate_portfolio(
     )
 
     top_cryptos = sorted_cryptos[:8]
-    other_value = sum(h["current_value"] for h in sorted_cryptos[8:])
+    other_value = sum((D(h["current_value"]) for h in sorted_cryptos[8:]), ZERO)
     for c in top_cryptos:
         allocation_items.append({
             "symbol": c["symbol"],
-            "value": round(c["current_value"], 2),
+            "value": _to_float(D(c["current_value"]), 2),
         })
-    if other_value > 0.01:
+    if other_value > EPSILON_ALLOC:
         allocation_items.append({
             "symbol": "OTHERS",
-            "value": round(other_value, 2),
+            "value": _to_float(other_value, 2),
         })
 
     for item in allocation_items:
         item["percentage"] = (
-            round((item["value"] / total_portfolio_value) * 100.0, 1)
-            if total_portfolio_value > 0
+            _to_float((D(item["value"]) / total_portfolio_value) * HUNDRED, 1)
+            if total_portfolio_value > ZERO
             else 0.0
         )
 
@@ -388,23 +409,24 @@ def calculate_portfolio(
     )[:10]
 
     timeline_sorted = [
-        {"period": k, **v} for k, v in sorted(trades_timeline.items())
+        {"period": k, "buys": v["buys"], "sells": v["sells"], "volume": _to_float(v["volume"])}
+        for k, v in sorted(trades_timeline.items())
     ]
 
     return {
         "summary": {
-            "total_portfolio_value": round(total_portfolio_value, 2),
-            "total_crypto_value": round(total_crypto_value, 2),
-            "usdt_cash": round(usdt_cash, 2),
-            "dai_cash": round(dai_cash, 2),
-            "margin_usdt_cash": round(margin_usdt_cash, 2),
-            "margin_usdt_total": round(margin_usdt_total, 2),
-            "total_invested_capital": round(total_invested_capital, 2),
-            "total_realized_pnl": round(total_realized_pnl, 2),
-            "total_unrealized_pnl": round(total_unrealized_pnl, 2),
-            "total_pnl": round(total_pnl, 2),
-            "overall_pnl_pct": round(overall_pnl_pct, 2),
-            "total_fees_usdt": round(total_fees_usdt, 2),
+            "total_portfolio_value": _to_float(total_portfolio_value, 2),
+            "total_crypto_value": _to_float(total_crypto_value, 2),
+            "usdt_cash": _to_float(usdt_cash, 2),
+            "dai_cash": _to_float(dai_cash, 2),
+            "margin_usdt_cash": _to_float(margin_usdt_cash, 2),
+            "margin_usdt_total": _to_float(margin_usdt_total, 2),
+            "total_invested_capital": _to_float(total_invested_capital, 2),
+            "total_realized_pnl": _to_float(total_realized_pnl, 2),
+            "total_unrealized_pnl": _to_float(total_unrealized_pnl, 2),
+            "total_pnl": _to_float(total_pnl, 2),
+            "overall_pnl_pct": _to_float(overall_pnl_pct, 2),
+            "total_fees_usdt": _to_float(total_fees_usdt, 2),
             "active_assets_count": len(active_holdings),
             "dust_assets_count": len(dust_holdings),
             "total_assets_count": len(holdings),
@@ -424,10 +446,10 @@ def calculate_portfolio(
             "pnl_by_asset": [
                 {
                     "symbol": h["symbol"],
-                    "realized": round(h["realized_pnl"], 2),
-                    "unrealized": round(h["unrealized_pnl"], 2),
-                    "total": round(h["total_pnl"], 2),
-                    "pnl_pct": round(h["pnl_pct"], 2),
+                    "realized": _to_float(D(h["realized_pnl"]), 2),
+                    "unrealized": _to_float(D(h["unrealized_pnl"]), 2),
+                    "total": _to_float(D(h["total_pnl"]), 2),
+                    "pnl_pct": _to_float(D(h["pnl_pct"]), 2),
                 }
                 for h in pnl_by_asset
             ],
@@ -443,7 +465,7 @@ def calculate_positions_summary(
     margin_markets: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
-    Summarize leveraged positions (معاملات تعهدی) from Nobitex /positions/list.
+    Summarize leveraged positions (معاملات تعهدی) from Nobitex /positions/list using Decimal arithmetic.
     Includes comprehensive fee accounting: opening fee, closing fee, and auto-renewal (extension) fee.
     Uses live cached /margin/markets/list fee rates when falling back to estimation.
     """
@@ -479,31 +501,36 @@ def calculate_positions_summary(
     active_positions: List[Dict[str, Any]] = []
     past_positions: List[Dict[str, Any]] = []
 
-    total_realized_pnl_usdt = 0.0
-    total_realized_pnl_rls = 0.0
+    total_realized_pnl_usdt = ZERO
+    total_realized_pnl_rls = ZERO
     wins = 0
     losses = 0
 
-    total_fees_usdt = 0.0
-    total_open_fees_usdt = 0.0
-    total_close_fees_usdt = 0.0
-    total_extension_fees_usdt = 0.0
+    total_fees_usdt = ZERO
+    total_open_fees_usdt = ZERO
+    total_close_fees_usdt = ZERO
+    total_extension_fees_usdt = ZERO
 
-    total_fees_rls = 0.0
-    total_open_fees_rls = 0.0
-    total_close_fees_rls = 0.0
-    total_extension_fees_rls = 0.0
+    total_fees_rls = ZERO
+    total_open_fees_rls = ZERO
+    total_close_fees_rls = ZERO
+    total_extension_fees_rls = ZERO
+
+    default_rate_rls = Decimal("0.00125")
+    default_rate_usdt = Decimal("0.0008")
+    default_ext_rate = Decimal("0.00033333")
 
     for p in positions:
         status = str(p.get("status", "")).strip()
         src = str(p.get("src_currency", p.get("srcCurrency", ""))).upper()
         dst = str(p.get("dst_currency", p.get("dstCurrency", ""))).lower()
         side = str(p.get("side", "")).strip().lower()
-        pnl = float(p.get("pnl", p.get("PNL", 0.0)) or 0.0)
-        collat = float(p.get("collateral", 0.0) or 0.0)
-        lev = float(p.get("leverage", 1.0) or 1.0)
-        entry_p = float(p.get("entry_price", 0.0) or 0.0)
-        exit_p = float(p.get("exit_price", 0.0) or 0.0)
+        collat = D(p.get("collateral"))
+        lev = D(p.get("leverage"), default="1")
+        if lev <= ZERO:
+            lev = ONE
+        entry_p = D(p.get("entry_price"))
+        exit_p = D(p.get("exit_price"))
 
         # Resolve live fee rates from cached /margin/markets/list with safe static fallbacks
         m_cfg = None
@@ -511,33 +538,26 @@ def calculate_positions_summary(
             m_cfg = margin_markets.get(f"{src}{dst.upper()}")
             if m_cfg is None and dst in ("rls", "irr"):
                 m_cfg = margin_markets.get(f"{src}IRT")
-        default_rate = 0.00125 if dst == "rls" else 0.0008
-        rate = default_rate
-        ext_rate = 0.00033333
+        rate = default_rate_rls if dst == "rls" else default_rate_usdt
+        ext_rate = default_ext_rate
         if isinstance(m_cfg, dict):
             fee_key = "buyPositionFeeRate" if side == "buy" else "sellPositionFeeRate"
-            try:
-                live_rate = float(m_cfg.get(fee_key) or 0.0)
-                if live_rate > 0:
-                    rate = live_rate
-            except (ValueError, TypeError):
-                pass
-            try:
-                live_ext = float(m_cfg.get("extensionFeeRate") or m_cfg.get("renewalFeeRate") or 0.0)
-                if live_ext > 0:
-                    ext_rate = live_ext
-            except (ValueError, TypeError):
-                pass
+            live_rate = D(m_cfg.get(fee_key))
+            if live_rate > ZERO:
+                rate = live_rate
+            live_ext = D(m_cfg.get("extensionFeeRate") or m_cfg.get("renewalFeeRate"))
+            if live_ext > ZERO:
+                ext_rate = live_ext
 
         # --- 1. Opening Fee ---
         opened_at = p.get("opened_at")
-        open_fee = 0.0
+        open_fee = ZERO
         if opened_at in trades_by_ts:
             oid = trades_by_ts[opened_at].get("order_id")
             fills = trades_by_order.get(oid, [trades_by_ts[opened_at]])
             for fill in fills:
-                f_price = float(fill.get("price", 0.0) or 0.0)
-                f_fee = float(fill.get("fee", 0.0) or 0.0)
+                f_price = D(fill.get("price"))
+                f_fee = D(fill.get("fee"))
                 if fill.get("type") == "buy":
                     open_fee += f_fee * f_price
                 else:
@@ -547,15 +567,15 @@ def calculate_positions_summary(
 
         # --- 2. Closing Fee ---
         closed_at = p.get("closed_at")
-        close_fee = 0.0
+        close_fee = ZERO
         if status == "Open" or not closed_at:
-            close_fee = 0.0
+            close_fee = ZERO
         elif closed_at in trades_by_ts:
             oid = trades_by_ts[closed_at].get("order_id")
             fills = trades_by_order.get(oid, [trades_by_ts[closed_at]])
             for fill in fills:
-                f_price = float(fill.get("price", 0.0) or 0.0)
-                f_fee = float(fill.get("fee", 0.0) or 0.0)
+                f_price = D(fill.get("price"))
+                f_fee = D(fill.get("fee"))
                 if fill.get("type") == "buy":
                     close_fee += f_fee * f_price
                 else:
@@ -563,124 +583,137 @@ def calculate_positions_summary(
         else:
             val_exit = (
                 collat * lev * (exit_p / entry_p)
-                if (entry_p > 0 and exit_p > 0)
+                if (entry_p > ZERO and exit_p > ZERO)
                 else (collat * lev)
             )
             close_fee = val_exit * rate
 
         # --- 3. Extension / Auto-Renewal Fee ---
-        ext_fee = float(p.get("extension_fee") or p.get("extensionFee") or 0.0)
-        if ext_fee <= 0.0 and closed_at and opened_at:
+        ext_fee = D(p.get("extension_fee") if p.get("extension_fee") not in (None, "") else p.get("extensionFee"))
+        if ext_fee <= ZERO and closed_at and opened_at:
             try:
                 t_o = datetime.datetime.fromisoformat(opened_at)
                 t_c = datetime.datetime.fromisoformat(closed_at)
                 dur_hours = (t_c - t_o).total_seconds() / 3600.0
-                periods = int(dur_hours // 8)
-                liability = collat * max(0.0, lev - 1.0)
+                periods = Decimal(int(dur_hours // 8))
+                liability = collat * max(ZERO, lev - ONE)
                 ext_fee = periods * ext_rate * liability
             except Exception:
-                ext_fee = 0.0
+                ext_fee = ZERO
 
-        # Round individual position fee figures
+        # Quantize individual position fee figures
         if dst == "usdt":
-            p["open_fee"] = round(open_fee, 4)
-            p["close_fee"] = round(close_fee, 4)
-            p["extension_fee"] = round(ext_fee, 4)
-            p["total_fee"] = round(open_fee + close_fee + ext_fee, 4)
+            open_fee_q = _round_dec(open_fee, 4)
+            close_fee_q = _round_dec(close_fee, 4)
+            ext_fee_q = _round_dec(ext_fee, 4)
+            total_fee_q = _round_dec(open_fee + close_fee + ext_fee, 4)
 
-            total_fees_usdt += p["total_fee"]
-            total_open_fees_usdt += p["open_fee"]
-            total_close_fees_usdt += p["close_fee"]
-            total_extension_fees_usdt += p["extension_fee"]
+            p["open_fee"] = float(open_fee_q)
+            p["close_fee"] = float(close_fee_q)
+            p["extension_fee"] = float(ext_fee_q)
+            p["total_fee"] = float(total_fee_q)
+
+            total_fees_usdt += total_fee_q
+            total_open_fees_usdt += open_fee_q
+            total_close_fees_usdt += close_fee_q
+            total_extension_fees_usdt += ext_fee_q
         else:
-            p["open_fee"] = round(open_fee)
-            p["close_fee"] = round(close_fee)
-            p["extension_fee"] = round(ext_fee)
-            p["total_fee"] = round(open_fee + close_fee + ext_fee)
+            open_fee_q = _round_dec(open_fee, 0)
+            close_fee_q = _round_dec(close_fee, 0)
+            ext_fee_q = _round_dec(ext_fee, 0)
+            total_fee_q = _round_dec(open_fee + close_fee + ext_fee, 0)
 
-            total_fees_rls += p["total_fee"]
-            total_open_fees_rls += p["open_fee"]
-            total_close_fees_rls += p["close_fee"]
-            total_extension_fees_rls += p["extension_fee"]
+            p["open_fee"] = int(open_fee_q)
+            p["close_fee"] = int(close_fee_q)
+            p["extension_fee"] = int(ext_fee_q)
+            p["total_fee"] = int(total_fee_q)
+
+            total_fees_rls += total_fee_q
+            total_open_fees_rls += open_fee_q
+            total_close_fees_rls += close_fee_q
+            total_extension_fees_rls += ext_fee_q
 
         # Calculate TRUE NET PnL after deducting all fees and profit-share
-        gross_pnl = float(p.get("pnl", 0.0) or p.get("PNL", 0.0) or 0.0)
-        pool_share = float(p.get("pool_pnl_share", 0.0) or p.get("poolPNLShare", 0.0) or 0.0)
-        total_fee = float(p["total_fee"])
+        gross_pnl = D(p.get("pnl") if p.get("pnl") not in (None, "") else p.get("PNL"))
+        pool_share = D(p.get("pool_pnl_share") if p.get("pool_pnl_share") not in (None, "") else p.get("poolPNLShare"))
 
         if status == "Open":
-            net_pnl = gross_pnl - total_fee
+            net_pnl = gross_pnl - total_fee_q
         else:
-            net_pnl = gross_pnl - pool_share - total_fee
+            net_pnl = gross_pnl - pool_share - total_fee_q
 
-        net_pnl_percent = (net_pnl / collat * 100.0) if collat > 0 else 0.0
+        net_pnl_percent = (net_pnl / collat * HUNDRED) if collat > ZERO else ZERO
 
         if dst == "usdt":
-            p["gross_pnl"] = round(gross_pnl, 4)
-            p["pool_pnl_share"] = round(pool_share, 4)
-            p["net_pnl"] = round(net_pnl, 4)
-            p["pnl"] = round(net_pnl, 4)
+            net_pnl_q = _round_dec(net_pnl, 4)
+            p["gross_pnl"] = _to_float(gross_pnl, 4)
+            p["pool_pnl_share"] = _to_float(pool_share, 4)
+            p["net_pnl"] = float(net_pnl_q)
+            p["pnl"] = float(net_pnl_q)
         else:
-            p["gross_pnl"] = round(gross_pnl)
-            p["pool_pnl_share"] = round(pool_share)
-            p["net_pnl"] = round(net_pnl)
-            p["pnl"] = round(net_pnl)
+            net_pnl_q = _round_dec(net_pnl, 0)
+            p["gross_pnl"] = int(_round_dec(gross_pnl, 0))
+            p["pool_pnl_share"] = int(_round_dec(pool_share, 0))
+            p["net_pnl"] = int(net_pnl_q)
+            p["pnl"] = int(net_pnl_q)
 
-        p["gross_pnl_percent"] = float(p.get("pnl_percent", 0.0) or 0.0)
-        p["net_pnl_percent"] = round(net_pnl_percent, 2)
-        p["pnl_percent"] = round(net_pnl_percent, 2)
+        p["gross_pnl_percent"] = _to_float(D(p.get("pnl_percent")))
+        p["net_pnl_percent"] = _to_float(net_pnl_percent, 2)
+        p["pnl_percent"] = _to_float(net_pnl_percent, 2)
 
         if status == "Open":
-            # Calculate Liquidation Risk Metrics
-            mark_p = float(p.get("mark_price", 0.0) or 0.0)
-            entry_p = float(p.get("entry_price", 0.0) or 0.0)
-            current_p = mark_p if mark_p > 0 else entry_p
-            liq_p = float(p.get("liquidation_price", 0.0) or 0.0)
+            mark_p = D(p.get("mark_price"))
+            current_p = mark_p if mark_p > ZERO else entry_p
+            liq_p = D(p.get("liquidation_price"))
 
-            if current_p > 0 and liq_p > 0:
-                dist_pct = round(abs(current_p - liq_p) / current_p * 100.0, 2)
-                dist_amt = round(abs(current_p - liq_p), 2)
-                if dist_pct >= 20.0:
+            if current_p > ZERO and liq_p > ZERO:
+                dist_pct = _round_dec(abs(current_p - liq_p) / current_p * HUNDRED, 2)
+                dist_amt = _round_dec(abs(current_p - liq_p), 2)
+                if dist_pct >= Decimal("20"):
                     r_level = "safe"
-                elif dist_pct >= 10.0:
+                elif dist_pct >= Decimal("10"):
                     r_level = "warning"
                 else:
                     r_level = "danger"
             else:
-                dist_pct = 0.0
-                dist_amt = 0.0
+                dist_pct = ZERO
+                dist_amt = ZERO
                 r_level = "unknown"
 
-            p["liquidation_distance_pct"] = dist_pct
-            p["liquidation_distance_amount"] = dist_amt
+            p["liquidation_distance_pct"] = float(dist_pct)
+            p["liquidation_distance_amount"] = float(dist_amt)
             p["risk_level"] = r_level
             active_positions.append(p)
         else:
             past_positions.append(p)
             if dst == "usdt":
-                total_realized_pnl_usdt += p["pnl"]
+                total_realized_pnl_usdt += net_pnl_q
             elif dst == "rls":
-                total_realized_pnl_rls += p["pnl"]
+                total_realized_pnl_rls += net_pnl_q
 
-            if p["pnl"] > 0.001:
+            if net_pnl_q > EPSILON_PNL:
                 wins += 1
-            elif p["pnl"] < -0.001:
+            elif net_pnl_q < -EPSILON_PNL:
                 losses += 1
 
     total_past = len(past_positions)
-    win_rate_pct = round((wins / total_past * 100.0), 1) if total_past > 0 else 0.0
+    win_rate_pct = (
+        _to_float((Decimal(wins) / Decimal(total_past)) * HUNDRED, 1)
+        if total_past > 0
+        else 0.0
+    )
 
     usdt_past = [
-        p for p in past_positions 
+        p for p in past_positions
         if str(p.get("dst_currency", p.get("dstCurrency", ""))).lower() == "usdt"
     ]
     best_position = (
-        max(usdt_past, key=lambda x: float(x.get("pnl", 0.0) or 0.0))
+        max(usdt_past, key=lambda x: D(x.get("pnl")))
         if usdt_past
         else None
     )
     worst_position = (
-        min(usdt_past, key=lambda x: float(x.get("pnl", 0.0) or 0.0))
+        min(usdt_past, key=lambda x: D(x.get("pnl")))
         if usdt_past
         else None
     )
@@ -696,18 +729,18 @@ def calculate_positions_summary(
 
     return {
         "summary": {
-            "total_realized_pnl_usdt": round(total_realized_pnl_usdt, 2),
-            "total_realized_pnl_rls": round(total_realized_pnl_rls, 0),
-            "total_realized_pnl_irt": round(total_realized_pnl_rls / 10.0),
-            "total_fees_usdt": round(total_fees_usdt, 2),
-            "total_open_fees_usdt": round(total_open_fees_usdt, 2),
-            "total_close_fees_usdt": round(total_close_fees_usdt, 2),
-            "total_extension_fees_usdt": round(total_extension_fees_usdt, 2),
-            "total_fees_rls": round(total_fees_rls),
-            "total_fees_irt": round(total_fees_rls / 10.0),
-            "total_open_fees_irt": round(total_open_fees_rls / 10.0),
-            "total_close_fees_irt": round(total_close_fees_rls / 10.0),
-            "total_extension_fees_irt": round(total_extension_fees_rls / 10.0),
+            "total_realized_pnl_usdt": _to_float(total_realized_pnl_usdt, 2),
+            "total_realized_pnl_rls": _to_float(total_realized_pnl_rls, 0),
+            "total_realized_pnl_irt": int(_round_dec(total_realized_pnl_rls / TEN, 0)),
+            "total_fees_usdt": _to_float(total_fees_usdt, 2),
+            "total_open_fees_usdt": _to_float(total_open_fees_usdt, 2),
+            "total_close_fees_usdt": _to_float(total_close_fees_usdt, 2),
+            "total_extension_fees_usdt": _to_float(total_extension_fees_usdt, 2),
+            "total_fees_rls": int(_round_dec(total_fees_rls, 0)),
+            "total_fees_irt": int(_round_dec(total_fees_rls / TEN, 0)),
+            "total_open_fees_irt": int(_round_dec(total_open_fees_rls / TEN, 0)),
+            "total_close_fees_irt": int(_round_dec(total_close_fees_rls / TEN, 0)),
+            "total_extension_fees_irt": int(_round_dec(total_extension_fees_rls / TEN, 0)),
             "active_count": len(active_positions),
             "past_count": total_past,
             "wins_count": wins,
@@ -734,7 +767,7 @@ def calculate_daily_pnl_calendar(
     since_date: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Calculate daily realized PnL breakdown across Spot and Futures.
+    Calculate daily realized PnL breakdown across Spot and Futures using Decimal arithmetic.
     Maps each trading day to its spot sells, futures closed positions, fees, volume, and net profit.
     """
     effective_from = from_date or (since_date if since_date and since_date != "all" else None)
@@ -751,12 +784,12 @@ def calculate_daily_pnl_calendar(
 
     daily_stats: Dict[str, Dict[str, Any]] = defaultdict(lambda: {
         "date": "",
-        "spot_pnl": 0.0,
-        "futures_pnl_usdt": 0.0,
-        "futures_pnl_irt": 0.0,
-        "total_pnl": 0.0,
-        "volume_usdt": 0.0,
-        "fees_usdt": 0.0,
+        "spot_pnl": ZERO,
+        "futures_pnl_usdt": ZERO,
+        "futures_pnl_irt": ZERO,
+        "total_pnl": ZERO,
+        "volume_usdt": ZERO,
+        "fees_usdt": ZERO,
         "trades_count": 0,
         "status": "neutral",
         "spot_trades": [],
@@ -773,20 +806,18 @@ def calculate_daily_pnl_calendar(
         by_symbol[symbol].append(t)
 
     for symbol, symbol_trades in by_symbol.items():
-        current_qty = 0.0
-        avg_cost = 0.0
+        current_qty = ZERO
+        avg_cost = ZERO
 
         for t in sorted(symbol_trades, key=lambda x: str(x.get("timestamp", ""))):
             ttype = str(t.get("type", "")).lower()
             market = str(t.get("market", "")).upper()
             quote = market.split("-", 1)[1] if "-" in market else "USDT"
-            try:
-                raw_price = float(t.get("price", 0.0))
-                amount = float(t.get("amount", 0.0))
-                raw_total = float(t.get("total", 0.0))
-                fee_raw = float(t.get("fee", 0.0))
-            except (ValueError, TypeError):
-                continue
+
+            raw_price = D(t.get("price"))
+            amount = D(t.get("amount"))
+            raw_total = D(t.get("total"))
+            fee_raw = D(t.get("fee"))
 
             price, _ = _convert_quote_to_usdt(raw_price, quote, usdt_rls_rate)
             total, _ = _convert_quote_to_usdt(raw_total, quote, usdt_rls_rate)
@@ -798,12 +829,12 @@ def calculate_daily_pnl_calendar(
 
             if ttype == "buy":
                 fee_usdt = fee_raw * price
-                net_amount = max(0.0, amount - fee_raw)
-                if current_qty + net_amount > 0:
-                    avg_cost = ((current_qty * avg_cost) + total) / (current_qty + net_amount)
+                net_amount = max(ZERO, amount - fee_raw)
+                denom = current_qty + net_amount
+                if denom > ZERO:
+                    avg_cost = ((current_qty * avg_cost) + total) / denom
                 current_qty += net_amount
 
-                # Record buy volume and fee if within date range
                 if is_in_range(date_str):
                     daily_stats[date_str]["date"] = date_str
                     daily_stats[date_str]["volume_usdt"] += total
@@ -811,42 +842,46 @@ def calculate_daily_pnl_calendar(
 
             elif ttype == "sell":
                 fee_usdt_opt, _ = _convert_quote_to_usdt(fee_raw, quote, usdt_rls_rate)
-                fee_usdt = fee_usdt_opt if fee_usdt_opt is not None else 0.0
+                fee_usdt = fee_usdt_opt if fee_usdt_opt is not None else ZERO
                 matched_qty = min(current_qty, amount)
 
-                if matched_qty > 0 and avg_cost > 0:
+                if matched_qty > ZERO and avg_cost > ZERO:
                     entry_avg_cost = avg_cost
                     matched_cost = matched_qty * entry_avg_cost
                     matched_revenue = matched_qty * price
-                    prop_fee = fee_usdt * (matched_qty / amount) if amount > 0 else 0.0
+                    prop_fee = (fee_usdt * (matched_qty / amount)) if amount > ZERO else ZERO
                     trade_pnl = matched_revenue - matched_cost - prop_fee
 
                     current_qty -= matched_qty
-                    if current_qty <= 1e-9:
-                        current_qty = 0.0
-                        avg_cost = 0.0
+                    if current_qty <= EPSILON_QTY:
+                        current_qty = ZERO
+                        avg_cost = ZERO
 
                     if is_in_range(date_str):
                         daily_stats[date_str]["date"] = date_str
                         daily_stats[date_str]["spot_pnl"] += trade_pnl
                         daily_stats[date_str]["volume_usdt"] += total
                         daily_stats[date_str]["fees_usdt"] += fee_usdt
+                        pnl_pct_val = (
+                            ((price - entry_avg_cost) / entry_avg_cost * HUNDRED)
+                            if entry_avg_cost > ZERO
+                            else ZERO
+                        )
                         daily_stats[date_str]["spot_trades"].append({
                             "id": t.get("id"),
                             "order_id": t.get("order_id"),
                             "market": t.get("market"),
                             "symbol": symbol,
                             "type": "sell",
-                            "price": price,
-                            "amount": amount,
-                            "total": total,
-                            "fee": fee_raw,
-                            "pnl": round(trade_pnl, 2),
-                            "pnl_pct": round(((price - entry_avg_cost) / entry_avg_cost * 100.0), 1) if entry_avg_cost > 0 else 0.0,
+                            "price": _to_float(price),
+                            "amount": _to_float(amount),
+                            "total": _to_float(total),
+                            "fee": _to_float(fee_raw),
+                            "pnl": _to_float(trade_pnl, 2),
+                            "pnl_pct": _to_float(pnl_pct_val, 1),
                             "timestamp": ts,
                         })
                 else:
-                    # Unmatched sell
                     if is_in_range(date_str):
                         daily_stats[date_str]["date"] = date_str
                         daily_stats[date_str]["volume_usdt"] += total
@@ -859,16 +894,22 @@ def calculate_daily_pnl_calendar(
         if not is_in_range(date_str):
             continue
 
-        pnl = float(pos.get("net_pnl", pos.get("pnl", pos.get("PNL", 0.0))) or 0.0)
+        pnl_val = D(
+            pos.get("net_pnl")
+            if pos.get("net_pnl") not in (None, "")
+            else (pos.get("pnl") if pos.get("pnl") not in (None, "") else pos.get("PNL"))
+        )
         dst = str(pos.get("dst_currency", pos.get("dstCurrency", ""))).upper()
 
-        pnl_usdt = pnl if dst == "USDT" else 0.0
-        pnl_irt = pnl / 10.0 if dst in ("RLS", "IRR") else (pnl if dst == "IRT" else 0.0)
+        pnl_usdt = pnl_val if dst == "USDT" else ZERO
+        pnl_irt = (pnl_val / TEN) if dst in ("RLS", "IRR") else (pnl_val if dst == "IRT" else ZERO)
 
-        entry_price = float(pos.get("entry_price", 0.0) or 0.0)
-        collateral = float(pos.get("collateral", 0.0) or 0.0)
-        leverage = float(pos.get("leverage", 1.0) or 1.0)
-        pos_vol = round(collateral * leverage, 2) if dst == "USDT" else 0.0
+        entry_price = D(pos.get("entry_price"))
+        collateral = D(pos.get("collateral"))
+        leverage = D(pos.get("leverage"), default="1")
+        if leverage <= ZERO:
+            leverage = ONE
+        pos_vol = _round_dec(collateral * leverage, 2) if dst == "USDT" else ZERO
 
         daily_stats[date_str]["date"] = date_str
         daily_stats[date_str]["futures_pnl_usdt"] += pnl_usdt
@@ -882,15 +923,15 @@ def calculate_daily_pnl_calendar(
             "dst_currency": dst,
             "side": pos.get("side"),
             "leverage": pos.get("leverage"),
-            "entry_price": entry_price,
-            "exit_price": float(pos.get("exit_price", 0.0) or 0.0),
-            "pnl": round(pnl, 2),
-            "pnl_usdt": round(pnl_usdt, 2),
-            "pnl_irt": round(pnl_irt),
-            "gross_pnl": float(pos.get("gross_pnl", 0.0)),
-            "pool_pnl_share": float(pos.get("pool_pnl_share", 0.0)),
-            "total_fee": float(pos.get("total_fee", 0.0)),
-            "pnl_percent": float(pos.get("pnl_percent", 0.0) or 0.0),
+            "entry_price": _to_float(entry_price),
+            "exit_price": _to_float(D(pos.get("exit_price"))),
+            "pnl": _to_float(pnl_val, 2),
+            "pnl_usdt": _to_float(pnl_usdt, 2),
+            "pnl_irt": int(_round_dec(pnl_irt, 0)),
+            "gross_pnl": _to_float(D(pos.get("gross_pnl"))),
+            "pool_pnl_share": _to_float(D(pos.get("pool_pnl_share"))),
+            "total_fee": _to_float(D(pos.get("total_fee"))),
+            "pnl_percent": _to_float(D(pos.get("pnl_percent"))),
             "closed_at": closed_at,
             "status": pos.get("status"),
         })
@@ -899,42 +940,40 @@ def calculate_daily_pnl_calendar(
     formatted_daily: Dict[str, Dict[str, Any]] = {}
     winning_days = 0
     losing_days = 0
-    total_net_pnl = 0.0
+    total_net_pnl = ZERO
     total_trades_count = 0
 
     for d, item in daily_stats.items():
         if not item["date"]:
             item["date"] = d
 
-        spot_pnl = round(item["spot_pnl"], 2)
-        fut_pnl = round(item["futures_pnl_usdt"], 2)
-        fut_irt = round(item["futures_pnl_irt"])
+        spot_pnl = _round_dec(item["spot_pnl"], 2)
+        fut_pnl = _round_dec(item["futures_pnl_usdt"], 2)
+        fut_irt = _round_dec(item["futures_pnl_irt"], 0)
 
         # Convert IRT futures PnL to USDT using live Nobitex USDT-RLS rate if available
-        fut_irt_usdt = 0.0
-        if fut_irt != 0 and market_stats:
-            rls_rate = float(market_stats.get("usdt-rls", {}).get("latest", 0.0) or 0.0)
-            if rls_rate > 0:
-                toman_rate = rls_rate / 10.0
-                fut_irt_usdt = round(fut_irt / toman_rate, 2)
+        fut_irt_usdt = ZERO
+        if fut_irt != ZERO and usdt_rls_rate > ZERO:
+            toman_rate = usdt_rls_rate / TEN
+            fut_irt_usdt = _round_dec(fut_irt / toman_rate, 2)
 
-        tot_pnl = round(spot_pnl + fut_pnl + fut_irt_usdt, 2)
+        tot_pnl = _round_dec(spot_pnl + fut_pnl + fut_irt_usdt, 2)
 
-        item["spot_pnl"] = spot_pnl
-        item["futures_pnl_usdt"] = fut_pnl
-        item["futures_pnl_irt"] = fut_irt
-        item["total_pnl"] = tot_pnl
-        item["volume_usdt"] = round(item["volume_usdt"], 2)
-        item["fees_usdt"] = round(item["fees_usdt"], 2)
+        item["spot_pnl"] = float(spot_pnl)
+        item["futures_pnl_usdt"] = float(fut_pnl)
+        item["futures_pnl_irt"] = int(fut_irt)
+        item["total_pnl"] = float(tot_pnl)
+        item["volume_usdt"] = _to_float(item["volume_usdt"], 2)
+        item["fees_usdt"] = _to_float(item["fees_usdt"], 2)
 
         total_actions = len(item["spot_trades"]) + len(item["futures_positions"])
         item["trades_count"] = total_actions
         total_trades_count += total_actions
 
-        if tot_pnl > 0.005 or fut_irt > 10:
+        if tot_pnl > EPSILON_DAY or fut_irt > TEN:
             item["status"] = "profit"
             winning_days += 1
-        elif tot_pnl < -0.005 or fut_irt < -10:
+        elif tot_pnl < -EPSILON_DAY or fut_irt < -TEN:
             item["status"] = "loss"
             losing_days += 1
         else:
@@ -944,7 +983,11 @@ def calculate_daily_pnl_calendar(
         formatted_daily[d] = item
 
     active_days_count = len(formatted_daily)
-    win_rate = round((winning_days / active_days_count * 100.0), 1) if active_days_count > 0 else 0.0
+    win_rate = (
+        _to_float((Decimal(winning_days) / Decimal(active_days_count)) * HUNDRED, 1)
+        if active_days_count > 0
+        else 0.0
+    )
 
     days_list = list(formatted_daily.values())
     best_day = max(days_list, key=lambda x: x["total_pnl"]) if days_list else None
@@ -953,7 +996,7 @@ def calculate_daily_pnl_calendar(
     return {
         "daily_stats": formatted_daily,
         "summary": {
-            "total_realized_pnl_usdt": round(total_net_pnl, 2),
+            "total_realized_pnl_usdt": _to_float(total_net_pnl, 2),
             "total_active_days": active_days_count,
             "winning_days": winning_days,
             "losing_days": losing_days,
@@ -968,7 +1011,7 @@ def calculate_daily_pnl_calendar(
                 "date": worst_day["date"],
                 "pnl": worst_day["total_pnl"],
             } if worst_day else None,
-        }
+        },
     }
 
 
@@ -998,13 +1041,13 @@ def calculate_equity_curve(
 
     # 1. Calculate live portfolio value
     port = calculate_portfolio(trades, wallets, market_prices, from_date=effective_from, to_date=to_date)
-    current_portfolio_value = port.get("summary", {}).get("total_portfolio_value", 0.0)
+    current_portfolio_value = D(port.get("summary", {}).get("total_portfolio_value"))
 
     # 2. Get daily pnl breakdown (spot sells + futures closed positions)
     daily_cal = calculate_daily_pnl_calendar(trades, past_positions, market_prices, from_date=None, to_date=None)
     daily_stats = daily_cal.get("daily_stats", {})
 
-    # 3. Determine start and end date based on timeframe or explicit date range (Asia/Tehran date)
+    # 3. Determine start and end date based on timeframe or explicit date range (IRST)
     today = datetime.datetime.now(TEHRAN_TZ).date()
     end_date = today
 
@@ -1049,79 +1092,85 @@ def calculate_equity_curve(
 
     # 4. Calculate initial equity at start of period
     total_period_pnl = sum(
-        daily_stats.get(d, {}).get("total_pnl", 0.0) for d in period_days
+        (D(daily_stats.get(d, {}).get("total_pnl")) for d in period_days),
+        ZERO,
     )
-    initial_equity = max(current_portfolio_value - total_period_pnl, 100.0)
+    initial_equity = max(current_portfolio_value - total_period_pnl, HUNDRED)
 
     # Determine baseline BTC price at start of period
-    first_btc_price = btc_prices_map.get(period_days[0]) if period_days else None
-    if not first_btc_price:
+    first_btc_price_raw = btc_prices_map.get(period_days[0]) if period_days else None
+    if not first_btc_price_raw:
         sorted_btc_keys = sorted(btc_prices_map.keys())
         if sorted_btc_keys:
             earlier = [k for k in sorted_btc_keys if k <= period_days[0]]
-            first_btc_price = btc_prices_map[earlier[-1]] if earlier else btc_prices_map[sorted_btc_keys[0]]
+            first_btc_price = D(btc_prices_map[earlier[-1]] if earlier else btc_prices_map[sorted_btc_keys[0]])
         else:
-            first_btc_price = 80000.0
+            first_btc_price = Decimal("80000")
+    else:
+        first_btc_price = D(first_btc_price_raw)
 
     # 5. Build timeline
-    cum_pnl = 0.0
+    cum_pnl = ZERO
     timeline: List[Dict[str, Any]] = []
     last_known_btc = first_btc_price
     peak_equity = initial_equity
-    max_drawdown_usdt = 0.0
+    max_drawdown_usdt = ZERO
 
     for d_str in period_days:
         st = daily_stats.get(d_str, {})
-        d_pnl = st.get("total_pnl", 0.0)
-        s_pnl = st.get("spot_pnl", 0.0)
-        f_pnl = st.get("futures_pnl_usdt", 0.0)
-        vol = st.get("volume_usdt", 0.0)
-        fees = st.get("fees_usdt", 0.0)
+        d_pnl = D(st.get("total_pnl"))
+        s_pnl = D(st.get("spot_pnl"))
+        f_pnl = D(st.get("futures_pnl_usdt"))
+        vol = D(st.get("volume_usdt"))
+        fees = D(st.get("fees_usdt"))
         trades_cnt = st.get("trades_count", 0)
 
         cum_pnl += d_pnl
-        equity = round(initial_equity + cum_pnl, 2)
-        cum_ret_pct = round((cum_pnl / initial_equity * 100.0), 2) if initial_equity > 0 else 0.0
+        equity = _round_dec(initial_equity + cum_pnl, 2)
+        cum_ret_pct = _round_dec((cum_pnl / initial_equity * HUNDRED), 2) if initial_equity > ZERO else ZERO
 
-        # Drawdown tracking
         if equity > peak_equity:
             peak_equity = equity
         dd_usdt = peak_equity - equity
         if dd_usdt > max_drawdown_usdt:
             max_drawdown_usdt = dd_usdt
 
-        # BTC tracking
-        btc_p = btc_prices_map.get(d_str)
-        if btc_p and btc_p > 0:
+        btc_p_raw = btc_prices_map.get(d_str)
+        btc_p = D(btc_p_raw) if btc_p_raw else ZERO
+        if btc_p > ZERO:
             last_known_btc = btc_p
         else:
             btc_p = last_known_btc
 
-        btc_ret_pct = round(((btc_p - first_btc_price) / first_btc_price * 100.0), 2) if first_btc_price > 0 else 0.0
-        alpha_pct = round(cum_ret_pct - btc_ret_pct, 2)
+        btc_ret_pct = (
+            _round_dec(((btc_p - first_btc_price) / first_btc_price * HUNDRED), 2)
+            if first_btc_price > ZERO
+            else ZERO
+        )
+        alpha_pct = _round_dec(cum_ret_pct - btc_ret_pct, 2)
 
         timeline.append({
             "date": d_str,
-            "daily_pnl": round(d_pnl, 2),
-            "spot_pnl": round(s_pnl, 2),
-            "futures_pnl": round(f_pnl, 2),
-            "cumulative_pnl": round(cum_pnl, 2),
-            "portfolio_equity": equity,
-            "cumulative_return_pct": cum_ret_pct,
-            "volume_usdt": round(vol, 2),
-            "fees_usdt": round(fees, 2),
+            "daily_pnl": _to_float(d_pnl, 2),
+            "spot_pnl": _to_float(s_pnl, 2),
+            "futures_pnl": _to_float(f_pnl, 2),
+            "cumulative_pnl": _to_float(cum_pnl, 2),
+            "portfolio_equity": float(equity),
+            "cumulative_return_pct": float(cum_ret_pct),
+            "volume_usdt": _to_float(vol, 2),
+            "fees_usdt": _to_float(fees, 2),
             "trades_count": trades_cnt,
-            "btc_price": round(btc_p, 2),
-            "btc_return_pct": btc_ret_pct,
-            "alpha_pct": alpha_pct,
+            "btc_price": _to_float(btc_p, 2),
+            "btc_return_pct": float(btc_ret_pct),
+            "alpha_pct": float(alpha_pct),
         })
 
-    max_drawdown_pct = round((max_drawdown_usdt / peak_equity * 100.0), 2) if peak_equity > 0 else 0.0
-    final_equity = timeline[-1]["portfolio_equity"] if timeline else initial_equity
-    net_profit = round(cum_pnl, 2)
-    total_return_pct = timeline[-1]["cumulative_return_pct"] if timeline else 0.0
-    final_btc_return = timeline[-1]["btc_return_pct"] if timeline else 0.0
-    alpha_vs_btc = round(total_return_pct - final_btc_return, 2)
+    max_drawdown_pct = _round_dec((max_drawdown_usdt / peak_equity * HUNDRED), 2) if peak_equity > ZERO else ZERO
+    final_equity = D(timeline[-1]["portfolio_equity"]) if timeline else initial_equity
+    net_profit = _round_dec(cum_pnl, 2)
+    total_return_pct = D(timeline[-1]["cumulative_return_pct"]) if timeline else ZERO
+    final_btc_return = D(timeline[-1]["btc_return_pct"]) if timeline else ZERO
+    alpha_vs_btc = _round_dec(total_return_pct - final_btc_return, 2)
 
     winning_days = sum(1 for item in timeline if item["daily_pnl"] > 0.005)
     losing_days = sum(1 for item in timeline if item["daily_pnl"] < -0.005)
@@ -1133,21 +1182,20 @@ def calculate_equity_curve(
         "end_date": period_days[-1] if period_days else "",
         "timeline": timeline,
         "metrics": {
-            "initial_equity": round(initial_equity, 2),
-            "current_equity": round(final_equity, 2),
-            "net_profit": net_profit,
-            "total_return_pct": total_return_pct,
-            "peak_equity": round(peak_equity, 2),
-            "max_drawdown_usdt": round(max_drawdown_usdt, 2),
-            "max_drawdown_pct": max_drawdown_pct,
-            "first_btc_price": round(first_btc_price, 2),
-            "latest_btc_price": round(last_known_btc, 2),
-            "btc_total_return_pct": final_btc_return,
-            "alpha_vs_btc": alpha_vs_btc,
+            "initial_equity": _to_float(initial_equity, 2),
+            "current_equity": _to_float(final_equity, 2),
+            "net_profit": float(net_profit),
+            "total_return_pct": float(total_return_pct),
+            "peak_equity": _to_float(peak_equity, 2),
+            "max_drawdown_usdt": _to_float(max_drawdown_usdt, 2),
+            "max_drawdown_pct": float(max_drawdown_pct),
+            "first_btc_price": _to_float(first_btc_price, 2),
+            "latest_btc_price": _to_float(last_known_btc, 2),
+            "btc_total_return_pct": float(final_btc_return),
+            "alpha_vs_btc": float(alpha_vs_btc),
             "winning_days": winning_days,
             "losing_days": losing_days,
             "even_days": even_days,
             "total_days": len(timeline),
-        }
+        },
     }
-
