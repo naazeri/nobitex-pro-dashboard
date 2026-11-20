@@ -4,7 +4,7 @@ import threading
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 
-from nob.time_utils import now_irst
+from nob.time_utils import now_irst, irst_date_bounds_to_utc_iso
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_ROOT / "data"
@@ -118,12 +118,35 @@ def _init_db_schema(db_path: Optional[Path] = None):
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS wallet_snapshots (
-                currency TEXT PRIMARY KEY,
+                currency TEXT NOT NULL,
+                wallet_type TEXT NOT NULL DEFAULT 'spot',
                 balance REAL NOT NULL,
                 active_balance REAL NOT NULL,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (currency, wallet_type)
             );
         """)
+
+        # Additive migration: upgrade legacy wallet_snapshots(currency PK) to composite (currency, wallet_type)
+        cursor.execute("PRAGMA table_info(wallet_snapshots);")
+        ws_cols = [c["name"] for c in cursor.fetchall()]
+        if "wallet_type" not in ws_cols:
+            cursor.execute("""
+                CREATE TABLE wallet_snapshots_new (
+                    currency TEXT NOT NULL,
+                    wallet_type TEXT NOT NULL DEFAULT 'spot',
+                    balance REAL NOT NULL,
+                    active_balance REAL NOT NULL,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (currency, wallet_type)
+                );
+            """)
+            cursor.execute("""
+                INSERT INTO wallet_snapshots_new (currency, wallet_type, balance, active_balance, updated_at)
+                SELECT currency, 'spot', balance, active_balance, updated_at FROM wallet_snapshots;
+            """)
+            cursor.execute("DROP TABLE wallet_snapshots;")
+            cursor.execute("ALTER TABLE wallet_snapshots_new RENAME TO wallet_snapshots;")
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS market_prices (
@@ -543,14 +566,14 @@ def get_trades(
         )
         params.append(tag_val)
 
-    if from_date:
+    utc_from, utc_to = irst_date_bounds_to_utc_iso(from_date, to_date)
+    if utc_from:
         conditions.append("timestamp >= ?")
-        params.append(from_date)
+        params.append(utc_from)
 
-    if to_date:
-        to_cutoff = to_date if len(to_date) > 10 else f"{to_date} 23:59:59"
+    if utc_to:
         conditions.append("timestamp <= ?")
-        params.append(to_cutoff)
+        params.append(utc_to)
 
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
@@ -685,43 +708,62 @@ def get_stats(db_path: Optional[Path] = None) -> Dict[str, Any]:
     }
 
 
-def upsert_wallet_snapshots(wallets: List[Dict[str, Any]], db_path: Optional[Path] = None) -> int:
-    """Store wallet balances in SQLite."""
+def upsert_wallet_snapshots(
+    wallets: List[Dict[str, Any]],
+    wallet_type: str = "spot",
+    db_path: Optional[Path] = None,
+) -> int:
+    """Store wallet balances in SQLite segmented by wallet_type ('spot' | 'margin')."""
     if not wallets:
         return 0
     init_db(db_path)
     count = 0
     now_str = now_irst().isoformat()
+    default_wtype = (wallet_type or "spot").strip().lower()
     with get_db_connection(db_path) as conn:
         cursor = conn.cursor()
         for w in wallets:
             curr = str(w.get("currency", "")).upper()
             if not curr:
                 continue
+            wtype = str(w.get("type") or w.get("wallet_type") or default_wtype).strip().lower()
+            if wtype not in ("spot", "margin"):
+                wtype = default_wtype
             try:
                 bal = float(w.get("balance", 0.0))
-                active_bal = float(w.get("activeBalance", bal))
+                active_bal = float(w.get("activeBalance", w.get("active_balance", bal)))
             except (ValueError, TypeError):
                 bal = 0.0
                 active_bal = 0.0
             cursor.execute(
                 """
-                INSERT OR REPLACE INTO wallet_snapshots (currency, balance, active_balance, updated_at)
-                VALUES (?, ?, ?, ?)
+                INSERT OR REPLACE INTO wallet_snapshots (currency, wallet_type, balance, active_balance, updated_at)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (curr, bal, active_bal, now_str),
+                (curr, wtype, bal, active_bal, now_str),
             )
             count += 1
         conn.commit()
     return count
 
 
-def get_wallet_snapshots(db_path: Optional[Path] = None) -> List[Dict[str, Any]]:
-    """Retrieve saved wallet balances."""
+def get_wallet_snapshots(
+    wallet_type: Optional[str] = None,
+    db_path: Optional[Path] = None,
+) -> List[Dict[str, Any]]:
+    """Retrieve saved wallet balances (optionally filtered by wallet_type='spot'|'margin')."""
     init_db(db_path)
     with get_db_connection(db_path) as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT currency, balance, active_balance, updated_at FROM wallet_snapshots")
+        if wallet_type:
+            cursor.execute(
+                "SELECT currency, wallet_type, balance, active_balance, updated_at FROM wallet_snapshots WHERE wallet_type = ?",
+                (wallet_type.strip().lower(),),
+            )
+        else:
+            cursor.execute(
+                "SELECT currency, wallet_type, balance, active_balance, updated_at FROM wallet_snapshots"
+            )
         return [dict(row) for row in cursor.fetchall()]
 
 
@@ -793,14 +835,14 @@ def get_all_crypto_trades_chronological(
         params.append(trade_type)
 
     effective_from = from_date or since_date
-    if effective_from:
+    utc_from, utc_to = irst_date_bounds_to_utc_iso(effective_from, to_date)
+    if utc_from:
         conditions.append("timestamp >= ?")
-        params.append(effective_from)
+        params.append(utc_from)
 
-    if to_date:
-        to_cutoff = to_date if len(to_date) > 10 else f"{to_date} 23:59:59"
+    if utc_to:
         conditions.append("timestamp <= ?")
-        params.append(to_cutoff)
+        params.append(utc_to)
 
     sql = f"""
         SELECT *, 

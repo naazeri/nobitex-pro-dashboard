@@ -34,7 +34,7 @@ Phase 1 (DB WAL, Lifespan, IRST Timezone)
 | **Phase 2** ✅ | `NobitexClient` Transport, Rate Limiting & Error Mapping | `API-01`, `API-05` | Grouped (same transport layer) | Medium (Done) |
 | **Phase 3** ✅ | Incremental Sync (`fromId`) & Full Positions Pagination | `API-02`, `API-03` | Grouped (same sync pipeline) | Medium (Done) |
 | **Phase 4** ✅ | Surgical Fixes: Open Orders & Calendar Math | `BUG-01`, `BUG-02` | Grouped (small isolated fixes) | Low (Done) |
-| **Phase 5** | Spot Portfolio WAC Replay, `-RLS` Markets & Margin Wallets | `BUG-03`, `BUG-04` (SQL) | Isolated (financial core) | Medium |
+| **Phase 5** ✅ | Spot Portfolio WAC Replay, `-RLS` Markets & Margin Wallets | `BUG-03`, `BUG-04` (SQL) | Isolated (financial core) | Medium (Done) |
 | **Phase 6** | Chart UDF 500-Bar Pagination, 7-Day Clamp & Cache | `API-04` | Isolated (charting subsystem) | Low |
 | **Phase 7** | Dynamic Market Metadata (`/margin/markets/list`, `/v2/options`) | `OPT-01` | Isolated (metadata layer) | Low |
 | **Phase 8** | Monetary Precision Migration (`float` → `Decimal`) | `OPT-02` | Isolated (regression-sensitive) | Medium |
@@ -187,7 +187,7 @@ Phase 1 (DB WAL, Lifespan, IRST Timezone)
 
 ---
 
-## Phase 5: Spot Portfolio Accounting — WAC Replay, `-RLS` Markets & Margin Wallets
+## Phase 5: Spot Portfolio Accounting — WAC Replay, `-RLS` Markets & Margin Wallets ✅ (Completed)
 **Covers:** `BUG-03`, `BUG-04` (SQL date boundaries)  
 **Why isolated:** Touches core Spot Portfolio accounting (`calculate_portfolio`), DB schema (`wallet_snapshots`), and SQL date filtering. Needs focused numerical validation against existing data.
 
@@ -198,14 +198,14 @@ Phase 1 (DB WAL, Lifespan, IRST Timezone)
 - `src/nob/server.py`
 
 ### Tasks
-- [ ] **Date-Range WAC Replay (`server.py`, `pnl.py`):**
+- [x] **Date-Range WAC Replay (`server.py`, `pnl.py`):**
   - In `api_get_portfolio()`, load **all** chronological spot trades (`get_all_crypto_trades_chronological(from_date=None, to_date=None)`) and pass `from_date` / `to_date` into `calculate_portfolio()`.
   - Inside `calculate_portfolio()`, replay ALL trades from history start to build true `current_qty` and `avg_cost`, but only accumulate `realized_pnl`, `asset_fees_usdt`, `total_bought_*`, `total_sold_*`, `trades_count`, and `trades_timeline` for trades whose IRST date falls inside `[from_date, to_date]`.
-- [ ] **Consistent IRST SQL Date Filtering (`db.py`):**
+- [x] **Consistent IRST SQL Date Filtering (`db.py`):**
   - In `get_trades()` and `get_all_crypto_trades_chronological()`, convert `from_date` and `to_date` via `irst_date_bounds_to_utc_iso()` before comparing against UTC ISO `timestamp` column.
-- [ ] **Rial (`-RLS`) Spot Market Support (`pnl.py`):**
+- [x] **Rial (`-RLS`) Spot Market Support (`pnl.py`):**
   - In `calculate_portfolio()`, handle both `quote == "USDT"` and `quote in ("RLS", "IRR", "IRT")` by converting RLS prices/totals/fees to USDT using `market_stats["usdt-rls"]["latest"]` (flagging approximate conversion if historical rate is unavailable, or storing a `usdt_rls` rate lookup).
-- [ ] **Margin Wallet Sync (`nobitex_client.py`, `db.py`, `server.py`, `pnl.py`):**
+- [x] **Margin Wallet Sync (`nobitex_client.py`, `db.py`, `server.py`, `pnl.py`):**
   - Update `NobitexClient.fetch_wallets(wallet_type: str = "spot")` to send JSON body `{"type": wallet_type}` to `POST /users/wallets/list`.
   - Migrate `wallet_snapshots` table (additive migration) to include `wallet_type TEXT DEFAULT 'spot'` with composite primary key `(currency, wallet_type)`.
   - Sync both `"spot"` and `"margin"` wallets in `perform_sync()`, exposing `margin_usdt_cash` in portfolio summary without double-counting active position collateral.
@@ -214,9 +214,9 @@ Phase 1 (DB WAL, Lifespan, IRST Timezone)
 - Strictly preserve **ADR-001** (no hardcoded dates), **ADR-002** (`net_amount`), **ADR-003** (True Net PnL), and **ADR-010** (IRST).
 
 ### Verification & Acceptance Criteria
-- [ ] Selecting `30D` on Spot Portfolio preserves accurate `avg_cost` and `unrealized_pnl` for coins bought >30 days ago, while scoping `realized_pnl` and `fees` to the 30-day window.
-- [ ] A trade at `01:00 IRST` (`21:30 UTC` previous day) appears on the exact same date in Trades Table, Spot Portfolio, and PnL Calendar.
-- [ ] Crypto purchased in `-RLS` markets appears with valid cost basis and PnL in Spot Portfolio.
+- [x] Selecting `30D` on Spot Portfolio preserves accurate `avg_cost` and `unrealized_pnl` for coins bought >30 days ago, while scoping `realized_pnl` and `fees` to the 30-day window.
+- [x] A trade at `01:00 IRST` (`21:30 UTC` previous day) appears on the exact same date in Trades Table, Spot Portfolio, and PnL Calendar.
+- [x] Crypto purchased in `-RLS` markets appears with valid cost basis and PnL in Spot Portfolio.
 
 ---
 

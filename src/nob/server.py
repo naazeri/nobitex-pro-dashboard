@@ -192,7 +192,8 @@ def api_get_portfolio(
             pass
 
     effective_from = from_date or (since if since and since != "all" else None)
-    trades = get_all_crypto_trades_chronological(from_date=effective_from, to_date=to_date)
+    # Load full chronological spot history so WAC avg_cost is always replayed accurately
+    trades = get_all_crypto_trades_chronological(from_date=None, to_date=None)
     portfolio = calculate_portfolio(trades, wallets, prices, from_date=effective_from, to_date=to_date)
     return portfolio
 
@@ -423,11 +424,17 @@ def perform_sync(full: bool = False):
 
         client = get_nobitex_client()
 
-        # 1. Sync wallet balances
+        # 1. Sync wallet balances (spot + margin)
         sync_status["step"] = "Fetching wallet balances..."
         try:
-            wallets = client.fetch_wallets()
-            upsert_wallet_snapshots(wallets)
+            spot_wallets = client.fetch_wallets(wallet_type="spot")
+            upsert_wallet_snapshots(spot_wallets, wallet_type="spot")
+            try:
+                margin_wallets = client.fetch_wallets(wallet_type="margin")
+                upsert_wallet_snapshots(margin_wallets, wallet_type="margin")
+            except Exception as mw_err:
+                print("Notice: Margin wallets fetch failed:", mw_err)
+                warnings_list.append(f"Margin wallets sync skipped: {mw_err}")
         except NobitexAuthError as e:
             warnings_list.append(f"Wallets auth error ({e.code}): {e.message}")
         except Exception as e:

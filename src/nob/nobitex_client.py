@@ -486,9 +486,14 @@ class NobitexClient:
 
         return collected
 
-    def fetch_wallets(self) -> List[Dict[str, Any]]:
-        """Fetch all user wallets and their balances (POST /users/wallets/list)."""
-        data = self._request("POST", "/users/wallets/list", auth=True, timeout=20.0)
+    def fetch_wallets(self, wallet_type: str = "spot") -> List[Dict[str, Any]]:
+        """
+        Fetch user wallets and their balances (POST /users/wallets/list).
+        wallet_type: 'spot' (default) or 'margin'.
+        """
+        wtype = (wallet_type or "spot").strip().lower()
+        body_dict = {"type": wtype} if wtype in ("spot", "margin") else None
+        data = self._request("POST", "/users/wallets/list", body_dict=body_dict, auth=True, timeout=20.0)
         return data.get("wallets", [])
 
     def fetch_market_stats(

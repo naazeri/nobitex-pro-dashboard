@@ -12,6 +12,41 @@ def to_tehran_date_str(timestamp_str: str) -> str:
     return iso_to_irst_date_str(timestamp_str)
 
 
+def _get_usdt_rls_rate(market_stats: Optional[Dict[str, Any]]) -> float:
+    """Return live USDT-RLS price from market_stats, or 0.0 if unavailable."""
+    if not market_stats:
+        return 0.0
+    for key in ("usdt-rls", "usdtrls", "USDT-RLS"):
+        entry = market_stats.get(key)
+        if isinstance(entry, dict):
+            try:
+                val = float(entry.get("latest", 0.0) or 0.0)
+                if val > 0:
+                    return val
+            except (ValueError, TypeError):
+                continue
+    return 0.0
+
+
+def _convert_quote_to_usdt(value: float, quote: str, usdt_rls_rate: float) -> tuple[Optional[float], bool]:
+    """
+    Convert a price/total/fee denominated in quote currency to USDT.
+    Returns (usdt_value, is_approximate_rls_conversion).
+    """
+    q = (quote or "").upper()
+    if q == "USDT":
+        return value, False
+    if q in ("RLS", "IRR"):
+        if usdt_rls_rate > 0:
+            return value / usdt_rls_rate, True
+        return None, True
+    if q == "IRT":
+        if usdt_rls_rate > 0:
+            return value / (usdt_rls_rate / 10.0), True
+        return None, True
+    return None, False
+
+
 def calculate_portfolio(
     trades: List[Dict[str, Any]],
     wallets: Optional[List[Dict[str, Any]]] = None,
@@ -22,49 +57,65 @@ def calculate_portfolio(
 ) -> Dict[str, Any]:
     """
     Calculate spot portfolio metrics in USDT using Weighted Average Cost (WAC).
-    
-    Key Improvements:
-    - Zero-Cost Sell Protection: Unmatched sells (without prior buys in history)
-      are NEVER treated as pure profit. Only inventory-covered sells realize PnL.
-    - Fee Accounting:
-      * BUY fees: converted from crypto to USDT using (fee * buy_price).
-      * SELL fees: subtracted directly from sell revenue in USDT.
-    - Date filtering: optional from_date and to_date range filtering.
+
+    Key Guarantees:
+    - Full-History WAC Replay: Always replays full chronological history to build
+      accurate current_qty and avg_cost, while scoping realized_pnl, fees, volume,
+      trade counts, and timeline activity to [from_date, to_date] in IRST.
+    - Multi-Quote Support: Supports both -USDT and -RLS/-IRR/-IRT spot markets
+      (converting Rial markets using live usdt-rls rate and flagging approximation).
+    - Margin Wallet Separation: Separates spot vs margin wallets so margin_usdt_cash
+      is exposed without double-counting active position collateral.
+    - Zero-Cost Sell Protection: Unmatched sells never create fake profit.
     """
     if wallets is None:
         wallets = []
     if market_stats is None:
         market_stats = {}
 
-    # Support legacy since_date as alias for from_date
     effective_from = from_date or (since_date if since_date and since_date != "all" else None)
+    from_bound = effective_from[:10] if effective_from else None
+    to_bound = to_date[:10] if to_date else None
+    has_date_filter = bool(from_bound or to_bound)
 
-    # Filter trades by date if requested
-    if effective_from:
-        trades = [t for t in trades if str(t.get("timestamp", "")) >= effective_from]
-    if to_date:
-        to_cutoff = to_date if len(to_date) > 10 else f"{to_date} 23:59:59"
-        trades = [t for t in trades if str(t.get("timestamp", "")) <= to_cutoff]
+    def is_in_range(d_str: str) -> bool:
+        if not has_date_filter:
+            return True
+        if not d_str:
+            return False
+        if from_bound and d_str < from_bound:
+            return False
+        if to_bound and d_str > to_bound:
+            return False
+        return True
 
-    # Index wallets by uppercase currency
-    wallet_map: Dict[str, Dict[str, Any]] = {}
+    # Separate spot vs margin wallets (legacy entries without wallet_type default to 'spot')
+    spot_wallet_map: Dict[str, Dict[str, Any]] = {}
+    margin_wallet_map: Dict[str, Dict[str, Any]] = {}
     for w in wallets:
         curr = str(w.get("currency", "")).upper()
-        if curr:
-            wallet_map[curr] = w
+        if not curr:
+            continue
+        wtype = str(w.get("wallet_type") or w.get("type") or "spot").strip().lower()
+        if wtype == "margin":
+            margin_wallet_map[curr] = w
+        else:
+            spot_wallet_map[curr] = w
 
-    # Group trades by base crypto symbol (markets ending with -USDT)
+    usdt_rls_rate = _get_usdt_rls_rate(market_stats)
+
+    # Group ALL trades by base crypto symbol (both -USDT and -RLS/-IRR/-IRT)
     trades_by_symbol = defaultdict(list)
     for t in trades:
         market = str(t.get("market", "")).upper()
         if "-" in market:
             base, quote = market.split("-", 1)
-            if quote == "USDT":
+            if quote in ("USDT", "RLS", "IRR", "IRT") and base not in {"RLS", "USDT", "DAI", "IRR", "IRT"}:
                 trades_by_symbol[base].append(t)
 
     # All unique symbols to evaluate
     all_symbols = set(trades_by_symbol.keys())
-    for curr, w in wallet_map.items():
+    for curr, w in spot_wallet_map.items():
         if curr not in {"RLS", "USDT", "DAI", "IRR", "IRT"}:
             try:
                 if float(w.get("balance", 0.0)) > 0:
@@ -79,6 +130,8 @@ def calculate_portfolio(
     total_crypto_value = 0.0
     total_invested_capital = 0.0
 
+    trades_timeline = defaultdict(lambda: {"buys": 0, "sells": 0, "volume": 0.0})
+
     for symbol in sorted(all_symbols):
         symbol_trades = trades_by_symbol.get(symbol, [])
         symbol_trades.sort(key=lambda x: str(x.get("timestamp", "")))
@@ -91,82 +144,101 @@ def calculate_portfolio(
         total_bought_cost = 0.0
         total_sold_qty = 0.0
         total_sold_revenue = 0.0
+        in_range_trades_count = 0
+        used_approx_rls = False
 
         for t in symbol_trades:
             trade_type = str(t.get("type", "")).lower()
+            market = str(t.get("market", "")).upper()
+            quote = market.split("-", 1)[1] if "-" in market else "USDT"
             try:
-                price = float(t.get("price", 0.0))
+                raw_price = float(t.get("price", 0.0))
                 amount = float(t.get("amount", 0.0))
-                total = float(t.get("total", 0.0))
+                raw_total = float(t.get("total", 0.0))
                 fee_raw = float(t.get("fee", 0.0))
             except (ValueError, TypeError):
                 continue
 
+            price, approx_p = _convert_quote_to_usdt(raw_price, quote, usdt_rls_rate)
+            total, approx_t = _convert_quote_to_usdt(raw_total, quote, usdt_rls_rate)
+            if price is None or total is None:
+                continue
+            if approx_p or approx_t:
+                used_approx_rls = True
+
+            d_str = to_tehran_date_str(str(t.get("timestamp", "")))
+            in_window = is_in_range(d_str)
+
             if trade_type == "buy":
-                # Buy fee is charged in the cryptocurrency unit! Convert to USDT.
+                # Buy fee is charged in base cryptocurrency; convert to USDT using trade price
                 fee_usdt = fee_raw * price
-                asset_fees_usdt += fee_usdt
-
-                total_bought_qty += amount
-                total_bought_cost += total
-
-                # Net crypto received in wallet after Nobitex fee deduction
                 net_amount = max(0.0, amount - fee_raw)
 
-                # Update Weighted Average Cost (WAC) including acquisition fee
+                # Always replay WAC from full history
                 if current_qty + net_amount > 0:
                     avg_cost = ((current_qty * avg_cost) + total) / (current_qty + net_amount)
                 current_qty += net_amount
 
+                if in_window:
+                    asset_fees_usdt += fee_usdt
+                    total_bought_qty += amount
+                    total_bought_cost += total
+                    in_range_trades_count += 1
+                    if len(d_str) >= 7:
+                        trades_timeline[d_str[:7]]["buys"] += 1
+                        trades_timeline[d_str[:7]]["volume"] += total
+
             elif trade_type == "sell":
-                # Sell fee is charged in USDT!
-                fee_usdt = fee_raw
-                asset_fees_usdt += fee_usdt
+                # Sell fee is charged in quote currency; convert to USDT
+                fee_usdt_opt, _ = _convert_quote_to_usdt(fee_raw, quote, usdt_rls_rate)
+                fee_usdt = fee_usdt_opt if fee_usdt_opt is not None else 0.0
 
-                total_sold_qty += amount
-                total_sold_revenue += total
-
-                # Zero-Cost Sell Protection:
-                # Match sell only against existing inventory from known buys
+                # Always replay inventory against full history
                 matched_qty = min(current_qty, amount)
+                trade_pnl = 0.0
                 if matched_qty > 0 and avg_cost > 0:
                     matched_cost = matched_qty * avg_cost
                     matched_revenue = matched_qty * price
-                    # Proportionate fee for matched quantity
                     prop_fee = fee_usdt * (matched_qty / amount) if amount > 0 else 0.0
                     trade_pnl = matched_revenue - matched_cost - prop_fee
-                    realized_pnl += trade_pnl
                     current_qty -= matched_qty
                     if current_qty <= 1e-9:
                         current_qty = 0.0
                         avg_cost = 0.0
-                else:
-                    # Unmatched sell (prior history deleted by Nobitex or margin short opening)
-                    # DO NOT treat as 100% profit! Ignored from realized PnL.
-                    pass
 
-        # Check actual wallet balance if available
-        wallet_entry = wallet_map.get(symbol)
+                if in_window:
+                    asset_fees_usdt += fee_usdt
+                    total_sold_qty += amount
+                    total_sold_revenue += total
+                    realized_pnl += trade_pnl
+                    in_range_trades_count += 1
+                    if len(d_str) >= 7:
+                        trades_timeline[d_str[:7]]["sells"] += 1
+                        trades_timeline[d_str[:7]]["volume"] += total
+
+        # Check actual spot wallet balance if available
+        wallet_entry = spot_wallet_map.get(symbol)
         if wallet_entry is not None:
             try:
                 wallet_balance = float(wallet_entry.get("balance", 0.0))
-                active_balance = float(wallet_entry.get("activeBalance", wallet_balance))
+                active_balance = float(wallet_entry.get("activeBalance", wallet_entry.get("active_balance", wallet_balance)))
             except (ValueError, TypeError):
                 wallet_balance = current_qty
                 active_balance = current_qty
-        elif wallet_map:
-            # Wallets are populated, but asset is not in user's Nobitex wallet -> 0 balance
+        elif spot_wallet_map:
             wallet_balance = 0.0
             active_balance = 0.0
         else:
-            # Completely offline with no wallet snapshot -> fallback to trade ledger qty
             wallet_balance = current_qty
             active_balance = current_qty
 
-        # Effective holding quantity for current valuation
         holding_qty = wallet_balance
 
-        # Look up current market price in USDT
+        # When a date filter is active, omit completely inactive 0-balance symbols
+        if has_date_filter and holding_qty <= 1e-9 and in_range_trades_count == 0:
+            continue
+
+        # Look up current market price in USDT (fallback to RLS converted if USDT pair absent)
         market_key = f"{symbol}-usdt".lower()
         stat = market_stats.get(market_key, {})
         try:
@@ -180,6 +252,18 @@ def calculate_portfolio(
             day_high = 0.0
             day_low = 0.0
 
+        if current_price <= 0 and usdt_rls_rate > 0:
+            rls_stat = market_stats.get(f"{symbol}-rls".lower(), {})
+            try:
+                rls_latest = float(rls_stat.get("latest", 0.0))
+                if rls_latest > 0:
+                    current_price = rls_latest / usdt_rls_rate
+                    day_change = float(rls_stat.get("dayChange", 0.0))
+                    day_high = float(rls_stat.get("dayHigh", 0.0)) / usdt_rls_rate
+                    day_low = float(rls_stat.get("dayLow", 0.0)) / usdt_rls_rate
+            except (ValueError, TypeError):
+                pass
+
         current_value = holding_qty * current_price
 
         # Unrealized PnL (USDT)
@@ -192,7 +276,6 @@ def calculate_portfolio(
 
         asset_total_pnl = realized_pnl + unrealized_pnl
 
-        # Accumulate totals
         total_realized_pnl += realized_pnl
         total_unrealized_pnl += unrealized_pnl
         total_fees_usdt += asset_fees_usdt
@@ -216,26 +299,38 @@ def calculate_portfolio(
             "day_high": day_high,
             "day_low": day_low,
             "fees_paid_usdt": asset_fees_usdt,
-            "trades_count": len(symbol_trades),
+            "trades_count": in_range_trades_count,
             "total_bought_qty": total_bought_qty,
             "total_bought_cost": total_bought_cost,
             "total_sold_qty": total_sold_qty,
             "total_sold_revenue": total_sold_revenue,
             "is_dust": current_value < 1.0,
+            "approximate_rls_conversion": used_approx_rls,
         }
 
-    # USDT cash reserves
-    usdt_wallet = wallet_map.get("USDT", {})
+    # Spot USDT & DAI cash reserves
+    usdt_wallet = spot_wallet_map.get("USDT", {})
     try:
         usdt_cash = float(usdt_wallet.get("balance", 0.0))
     except (ValueError, TypeError):
         usdt_cash = 0.0
 
-    dai_wallet = wallet_map.get("DAI", {})
+    dai_wallet = spot_wallet_map.get("DAI", {})
     try:
         dai_cash = float(dai_wallet.get("balance", 0.0))
     except (ValueError, TypeError):
         dai_cash = 0.0
+
+    # Margin USDT cash (active_balance = free margin USDT, avoiding double-counting locked collateral)
+    margin_usdt_wallet = margin_wallet_map.get("USDT", {})
+    try:
+        margin_usdt_total = float(margin_usdt_wallet.get("balance", 0.0))
+        margin_usdt_cash = float(
+            margin_usdt_wallet.get("active_balance", margin_usdt_wallet.get("activeBalance", margin_usdt_total))
+        )
+    except (ValueError, TypeError):
+        margin_usdt_total = 0.0
+        margin_usdt_cash = 0.0
 
     total_portfolio_value = total_crypto_value + usdt_cash + dai_cash
     total_pnl = total_realized_pnl + total_unrealized_pnl
@@ -246,15 +341,12 @@ def calculate_portfolio(
         else 0.0
     )
 
-    # Assets with meaningful holding value (>= $1.00) vs dust holdings (< $1.00)
     active_holdings = [h for h in holdings.values() if h["current_value"] >= 1.0]
     dust_holdings = [h for h in holdings.values() if h["current_value"] < 1.0]
 
-    # Best and worst performers must be from active holdings (>= $1.00)
     best_performer = max(active_holdings, key=lambda x: x["pnl_pct"]) if active_holdings else None
     worst_performer = min(active_holdings, key=lambda x: x["pnl_pct"]) if active_holdings else None
 
-    # Chart data: Asset allocation (USDT + top cryptos)
     allocation_items = []
     if usdt_cash > 0.01:
         allocation_items.append({
@@ -289,30 +381,11 @@ def calculate_portfolio(
             else 0.0
         )
 
-    # Chart data: PnL by asset (top 10 by absolute PnL)
     pnl_by_asset = sorted(
         [h for h in holdings.values() if abs(h["total_pnl"]) > 0.01],
         key=lambda x: abs(x["total_pnl"]),
         reverse=True,
     )[:10]
-
-    # Chart data: Monthly trade activity
-    trades_timeline = defaultdict(lambda: {"buys": 0, "sells": 0, "volume": 0.0})
-    for t in trades:
-        ts = str(t.get("timestamp", ""))
-        d_str = to_tehran_date_str(ts)
-        if len(d_str) >= 7:
-            month_key = d_str[:7]
-            ttype = str(t.get("type", "")).lower()
-            try:
-                tot = float(t.get("total", 0.0))
-            except (ValueError, TypeError):
-                tot = 0.0
-            if ttype == "buy":
-                trades_timeline[month_key]["buys"] += 1
-            else:
-                trades_timeline[month_key]["sells"] += 1
-            trades_timeline[month_key]["volume"] += tot
 
     timeline_sorted = [
         {"period": k, **v} for k, v in sorted(trades_timeline.items())
@@ -324,6 +397,8 @@ def calculate_portfolio(
             "total_crypto_value": round(total_crypto_value, 2),
             "usdt_cash": round(usdt_cash, 2),
             "dai_cash": round(dai_cash, 2),
+            "margin_usdt_cash": round(margin_usdt_cash, 2),
+            "margin_usdt_total": round(margin_usdt_total, 2),
             "total_invested_capital": round(total_invested_capital, 2),
             "total_realized_pnl": round(total_realized_pnl, 2),
             "total_unrealized_pnl": round(total_unrealized_pnl, 2),
@@ -653,6 +728,8 @@ def calculate_daily_pnl_calendar(
         "futures_positions": [],
     })
 
+    usdt_rls_rate = _get_usdt_rls_rate(market_stats)
+
     # 1. Process Spot Trades Chronologically per Asset for WAC Realized PnL
     by_symbol: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for t in trades:
@@ -666,12 +743,19 @@ def calculate_daily_pnl_calendar(
 
         for t in sorted(symbol_trades, key=lambda x: str(x.get("timestamp", ""))):
             ttype = str(t.get("type", "")).lower()
+            market = str(t.get("market", "")).upper()
+            quote = market.split("-", 1)[1] if "-" in market else "USDT"
             try:
-                price = float(t.get("price", 0.0))
+                raw_price = float(t.get("price", 0.0))
                 amount = float(t.get("amount", 0.0))
-                total = float(t.get("total", 0.0))
+                raw_total = float(t.get("total", 0.0))
                 fee_raw = float(t.get("fee", 0.0))
             except (ValueError, TypeError):
+                continue
+
+            price, _ = _convert_quote_to_usdt(raw_price, quote, usdt_rls_rate)
+            total, _ = _convert_quote_to_usdt(raw_total, quote, usdt_rls_rate)
+            if price is None or total is None:
                 continue
 
             ts = str(t.get("timestamp", ""))
@@ -691,7 +775,8 @@ def calculate_daily_pnl_calendar(
                     daily_stats[date_str]["fees_usdt"] += fee_usdt
 
             elif ttype == "sell":
-                fee_usdt = fee_raw
+                fee_usdt_opt, _ = _convert_quote_to_usdt(fee_raw, quote, usdt_rls_rate)
+                fee_usdt = fee_usdt_opt if fee_usdt_opt is not None else 0.0
                 matched_qty = min(current_qty, amount)
 
                 if matched_qty > 0 and avg_cost > 0:
