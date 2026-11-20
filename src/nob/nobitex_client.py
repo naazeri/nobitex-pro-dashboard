@@ -52,6 +52,10 @@ ENDPOINT_RATE_LIMITS: Dict[str, Tuple[int, float, float]] = {
     "/v2/options": (28, 60.0, 1.0),                   # Public system options
     "/users/profile": (28, 60.0, 1.0),                # User profile & websocketAuthParam
     "/auth/ws/token/": (25, 60.0, 1.0),               # WebSocket JWT token (1200s TTL)
+    "/users/portfolio/last-week-daily-profit": (9, 180.0, 2.0),        # Official: 10 / 3 min
+    "/users/portfolio/last-week-daily-total-profit": (9, 180.0, 2.0),  # Official: 10 / 3 min
+    "/users/wallets/deposits/list": (18, 60.0, 1.0),                   # User deposits list
+    "/users/wallets/withdraws/list": (18, 60.0, 1.0),                  # User withdrawals list
 }
 
 _NUMERIC_SEGMENT_RE = re.compile(r"/\d+(?=/|$)")
@@ -818,6 +822,126 @@ class NobitexClient:
                 payload=data,
             )
         return token
+
+    def fetch_portfolio_daily_profit(self, monthly: bool = True) -> Dict[str, Any]:
+        """
+        Fetch Nobitex daily portfolio profit via POST /users/portfolio/last-week-daily-profit.
+        Pass monthly=True for the last 30 days (otherwise last 7 days). Rate limit: 10 / 3 min.
+        """
+        body = {"monthly": True} if monthly else {}
+        return self._request(
+            "POST",
+            "/users/portfolio/last-week-daily-profit",
+            body_dict=body,
+            auth=True,
+            timeout=20.0,
+        )
+
+    def fetch_portfolio_daily_total_profit(self, monthly: bool = True) -> Dict[str, Any]:
+        """
+        Fetch Nobitex daily total portfolio profit via POST /users/portfolio/last-week-daily-total-profit.
+        Pass monthly=True for the last 30 days (otherwise last 7 days). Rate limit: 10 / 3 min.
+        """
+        body = {"monthly": True} if monthly else {}
+        return self._request(
+            "POST",
+            "/users/portfolio/last-week-daily-total-profit",
+            body_dict=body,
+            auth=True,
+            timeout=20.0,
+        )
+
+    def fetch_deposits(
+        self,
+        page: int = 1,
+        page_size: int = 100,
+        wallet_id: Optional[int] = None,
+        from_date: Optional[str] = None,
+        to_date: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch a single page of user deposits via GET /users/wallets/deposits/list (READ permission).
+        """
+        params: Dict[str, Any] = {
+            "page": int(page),
+            "pageSize": min(int(page_size), 100),
+        }
+        if wallet_id is not None:
+            params["wallet"] = int(wallet_id)
+        if from_date:
+            params["from"] = from_date
+        if to_date:
+            params["to"] = to_date
+        data = self._request("GET", "/users/wallets/deposits/list", params=params, auth=True, timeout=20.0)
+        deposits = data.get("deposits", [])
+        return deposits if isinstance(deposits, list) else []
+
+    def fetch_withdrawals(
+        self,
+        page: int = 1,
+        page_size: int = 100,
+        wallet_id: Optional[int] = None,
+        from_date: Optional[str] = None,
+        to_date: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch a single page of user withdrawals via GET /users/wallets/withdraws/list (READ permission).
+        """
+        params: Dict[str, Any] = {
+            "page": int(page),
+            "pageSize": min(int(page_size), 100),
+        }
+        if wallet_id is not None:
+            params["wallet"] = int(wallet_id)
+        if from_date:
+            params["from"] = from_date
+        if to_date:
+            params["to"] = to_date
+        data = self._request("GET", "/users/wallets/withdraws/list", params=params, auth=True, timeout=20.0)
+        withdraws = data.get("withdraws", data.get("withdrawals", []))
+        return withdraws if isinstance(withdraws, list) else []
+
+    def fetch_all_deposits(self, page_size: int = 100, max_pages: int = 10) -> List[Dict[str, Any]]:
+        """Paginate through user deposits safely up to max_pages."""
+        eff_size = min(int(page_size), 100)
+        collected: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+        for page in range(1, max(1, int(max_pages)) + 1):
+            batch = self.fetch_deposits(page=page, page_size=eff_size)
+            if not batch:
+                break
+            new_in_page = 0
+            for item in batch:
+                key = str(item.get("id") or item.get("txHash") or item.get("hash") or len(collected))
+                if key in seen:
+                    continue
+                seen.add(key)
+                collected.append(item)
+                new_in_page += 1
+            if len(batch) < eff_size or new_in_page == 0:
+                break
+        return collected
+
+    def fetch_all_withdrawals(self, page_size: int = 100, max_pages: int = 10) -> List[Dict[str, Any]]:
+        """Paginate through user withdrawals safely up to max_pages."""
+        eff_size = min(int(page_size), 100)
+        collected: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+        for page in range(1, max(1, int(max_pages)) + 1):
+            batch = self.fetch_withdrawals(page=page, page_size=eff_size)
+            if not batch:
+                break
+            new_in_page = 0
+            for item in batch:
+                key = str(item.get("id") or item.get("txHash") or item.get("hash") or len(collected))
+                if key in seen:
+                    continue
+                seen.add(key)
+                collected.append(item)
+                new_in_page += 1
+            if len(batch) < eff_size or new_in_page == 0:
+                break
+        return collected
 
     def cancel_order(self, order_id: int) -> Dict[str, Any]:
         """

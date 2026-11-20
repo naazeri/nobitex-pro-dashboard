@@ -59,6 +59,10 @@ from nob.db import (
     set_metadata_json,
     get_metadata_cache,
     get_metadata_json,
+    upsert_cashflows,
+    get_cashflows,
+    upsert_daily_equity_snapshots,
+    get_daily_equity_snapshots,
 )
 from nob.nobitex_client import (
     NobitexClient,
@@ -253,7 +257,15 @@ def api_get_portfolio(
     effective_from = from_date or (since if since and since != "all" else None)
     # Load full chronological spot history so WAC avg_cost is always replayed accurately
     trades = get_all_crypto_trades_chronological(from_date=None, to_date=None)
-    portfolio = calculate_portfolio(trades, wallets, prices, from_date=effective_from, to_date=to_date)
+    cashflows = get_cashflows(confirmed_only=True)
+    portfolio = calculate_portfolio(
+        trades,
+        wallets,
+        prices,
+        from_date=effective_from,
+        to_date=to_date,
+        cashflows=cashflows,
+    )
     return portfolio
 
 
@@ -360,6 +372,8 @@ def api_get_equity_curve(
     wallets = get_wallet_snapshots()
     prices = get_market_prices()
     positions = calculate_positions_summary(raw_positions, prices).get("past", [])
+    cashflows = get_cashflows(confirmed_only=True)
+    snapshots = get_daily_equity_snapshots()
 
     return calculate_equity_curve(
         trades=trades,
@@ -371,7 +385,26 @@ def api_get_equity_curve(
         to_date=to_date,
         since_date=since,
         timeframe=timeframe,
+        cashflows=cashflows,
+        daily_snapshots=snapshots,
     )
+
+
+@app.get("/api/cashflows")
+def api_get_cashflows(
+    flow_type: Optional[str] = None,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    confirmed_only: bool = True,
+):
+    """Return stored deposit/withdrawal cashflows synced from Nobitex."""
+    rows = get_cashflows(
+        flow_type=flow_type,
+        from_date=from_date,
+        to_date=to_date,
+        confirmed_only=confirmed_only,
+    )
+    return {"cashflows": rows, "count": len(rows)}
 
 
 @app.get("/api/trades")
@@ -596,6 +629,53 @@ def perform_sync(full: bool = False):
         except Exception as opt_err:
             print("Notice: System options metadata refresh failed:", opt_err)
             warnings_list.append(f"System options metadata skipped: {opt_err}")
+
+        # 7. Sync deposits & withdrawals for TWR cashflow reconciliation
+        sync_status["step"] = "Syncing deposits & withdrawals..."
+        try:
+            deposits = client.fetch_all_deposits(page_size=100, max_pages=10)
+            if deposits:
+                upsert_cashflows(deposits, flow_type="deposit")
+        except NobitexAuthError as e:
+            warnings_list.append(f"Deposits sync skipped ({e.code}): {e.message}")
+        except Exception as dep_err:
+            print("Notice: Deposits sync failed:", dep_err)
+            warnings_list.append(f"Deposits sync skipped: {dep_err}")
+
+        try:
+            withdrawals = client.fetch_all_withdrawals(page_size=100, max_pages=10)
+            if withdrawals:
+                upsert_cashflows(withdrawals, flow_type="withdraw")
+        except NobitexAuthError as e:
+            warnings_list.append(f"Withdrawals sync skipped ({e.code}): {e.message}")
+        except Exception as wdr_err:
+            print("Notice: Withdrawals sync failed:", wdr_err)
+            warnings_list.append(f"Withdrawals sync skipped: {wdr_err}")
+
+        # 8. Optionally fetch Nobitex 30-day portfolio daily total profit snapshots
+        try:
+            _, pf_stale = get_metadata_cache("nobitex_portfolio_profit_cache", ttl_seconds=3600.0)
+            if full or pf_stale:
+                pf_total = client.fetch_portfolio_daily_total_profit(monthly=True)
+                if isinstance(pf_total, dict) and pf_total:
+                    set_metadata_json("nobitex_portfolio_profit_cache", pf_total)
+                    data_map = pf_total.get("data") if isinstance(pf_total.get("data"), dict) else {}
+                    snap_records = []
+                    for d_key, val in data_map.items():
+                        if isinstance(val, dict) and val.get("totalBalance") is not None:
+                            snap_records.append({
+                                "date": str(d_key)[:10],
+                                "total_equity_usdt": float(val.get("totalBalance", 0.0)),
+                                "net_cashflow_usdt": 0.0,
+                                "source": "nobitex_portfolio",
+                            })
+                    if snap_records:
+                        upsert_daily_equity_snapshots(snap_records)
+        except NobitexAPIError as pf_err:
+            if pf_err.code != "FeatureUnavailable":
+                warnings_list.append(f"Portfolio daily profit skipped ({pf_err.code}): {pf_err.message}")
+        except Exception as pf_err:
+            print("Notice: Portfolio daily profit refresh failed:", pf_err)
 
         record_last_sync()
 

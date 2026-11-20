@@ -91,6 +91,37 @@ def _convert_quote_to_usdt(
     return None, False
 
 
+def _cashflow_amount_to_usdt(
+    amount: Decimal,
+    currency: str,
+    market_stats: Optional[Dict[str, Any]],
+    usdt_rls_rate: Decimal,
+) -> Decimal:
+    """Convert a cashflow amount (deposit/withdrawal) in any currency to USDT using Decimal."""
+    if amount <= ZERO:
+        return ZERO
+    curr = (currency or "").strip().upper()
+    if curr in ("USDT", "DAI", "USDC"):
+        return amount
+    if curr in ("RLS", "IRR"):
+        return (amount / usdt_rls_rate) if usdt_rls_rate > ZERO else ZERO
+    if curr == "IRT":
+        return (amount / (usdt_rls_rate / TEN)) if usdt_rls_rate > ZERO else ZERO
+    if market_stats:
+        stat = market_stats.get(f"{curr.lower()}-usdt") or market_stats.get(f"{curr.lower()}usdt")
+        if isinstance(stat, dict):
+            px = D(stat.get("latest"))
+            if px > ZERO:
+                return amount * px
+        if usdt_rls_rate > ZERO:
+            rls_stat = market_stats.get(f"{curr.lower()}-rls") or market_stats.get(f"{curr.lower()}rls")
+            if isinstance(rls_stat, dict):
+                rls_px = D(rls_stat.get("latest"))
+                if rls_px > ZERO:
+                    return amount * (rls_px / usdt_rls_rate)
+    return ZERO
+
+
 def calculate_portfolio(
     trades: List[Dict[str, Any]],
     wallets: Optional[List[Dict[str, Any]]] = None,
@@ -98,6 +129,7 @@ def calculate_portfolio(
     from_date: Optional[str] = None,
     to_date: Optional[str] = None,
     since_date: Optional[str] = None,
+    cashflows: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """
     Calculate spot portfolio metrics in USDT using exact Decimal Weighted Average Cost (WAC).
@@ -156,6 +188,21 @@ def calculate_portfolio(
             base, quote = market.split("-", 1)
             if quote in ("USDT", "RLS", "IRR", "IRT") and base not in {"RLS", "USDT", "DAI", "IRR", "IRT"}:
                 trades_by_symbol[base].append(t)
+
+    # Track net externally deposited quantities per crypto symbol (to distinguish external deposits from missing trade history)
+    ext_deposited_by_symbol: Dict[str, Decimal] = defaultdict(lambda: ZERO)
+    for cf in (cashflows or []):
+        curr = str(cf.get("currency", "")).strip().upper()
+        if not curr or curr in {"RLS", "USDT", "DAI", "IRR", "IRT"}:
+            continue
+        ftype = str(cf.get("flow_type", "")).strip().lower()
+        amt = D(cf.get("amount"))
+        if amt <= ZERO:
+            continue
+        if ftype == "deposit":
+            ext_deposited_by_symbol[curr] += amt
+        elif ftype == "withdraw":
+            ext_deposited_by_symbol[curr] -= amt
 
     # All unique symbols to evaluate
     all_symbols = set(trades_by_symbol.keys())
@@ -313,6 +360,16 @@ def calculate_portfolio(
         if holding_qty > ZERO and avg_cost > ZERO:
             total_invested_capital += holding_qty * avg_cost
 
+        ext_dep_qty = max(ZERO, ext_deposited_by_symbol.get(symbol, ZERO))
+        if holding_qty <= EPSILON_QTY:
+            cost_basis_source = "flat"
+        elif avg_cost > ZERO:
+            cost_basis_source = "trades"
+        elif ext_dep_qty > EPSILON_QTY:
+            cost_basis_source = "external_deposit"
+        else:
+            cost_basis_source = "missing_history"
+
         holdings[symbol] = {
             "symbol": symbol,
             "market": f"{symbol}-USDT",
@@ -336,6 +393,8 @@ def calculate_portfolio(
             "total_sold_revenue": _to_float(total_sold_revenue),
             "is_dust": current_value < ONE,
             "approximate_rls_conversion": used_approx_rls,
+            "external_deposited_qty": _to_float(ext_dep_qty),
+            "cost_basis_source": cost_basis_source,
         }
 
     # Spot USDT & DAI cash reserves
@@ -1025,10 +1084,13 @@ def calculate_equity_curve(
     to_date: Optional[str] = None,
     since_date: Optional[str] = None,
     timeframe: str = "all",  # '7d', '30d', '90d', 'ytd', 'all', 'custom'
+    cashflows: Optional[List[Dict[str, Any]]] = None,
+    daily_snapshots: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """
-    Calculate daily continuous equity curve, cumulative PnL, and Bitcoin benchmark comparison.
-    Fills all calendar days without gaps so the timeline is continuous.
+    Calculate daily continuous equity curve, cumulative PnL, Time-Weighted Return (TWR),
+    and Bitcoin benchmark comparison, cleanly separating external deposits/withdrawals
+    from trading performance.
     """
     if wallets is None:
         wallets = []
@@ -1036,16 +1098,60 @@ def calculate_equity_curve(
         market_prices = {}
     if btc_prices_map is None:
         btc_prices_map = {}
+    if cashflows is None:
+        cashflows = []
+    if daily_snapshots is None:
+        daily_snapshots = {}
 
     effective_from = from_date or (since_date if since_date and since_date not in ("all", "cycle") else None)
 
     # 1. Calculate live portfolio value
-    port = calculate_portfolio(trades, wallets, market_prices, from_date=effective_from, to_date=to_date)
+    port = calculate_portfolio(
+        trades,
+        wallets,
+        market_prices,
+        from_date=effective_from,
+        to_date=to_date,
+        cashflows=cashflows,
+    )
     current_portfolio_value = D(port.get("summary", {}).get("total_portfolio_value"))
 
     # 2. Get daily pnl breakdown (spot sells + futures closed positions)
     daily_cal = calculate_daily_pnl_calendar(trades, past_positions, market_prices, from_date=None, to_date=None)
     daily_stats = daily_cal.get("daily_stats", {})
+
+    # Aggregate daily external cashflows (deposits - withdrawals) in USDT per IRST day
+    usdt_rls_rate = _get_usdt_rls_rate(market_prices)
+    daily_cashflows: Dict[str, Decimal] = defaultdict(lambda: ZERO)
+    daily_deposits: Dict[str, Decimal] = defaultdict(lambda: ZERO)
+    daily_withdrawals: Dict[str, Decimal] = defaultdict(lambda: ZERO)
+    for cf in cashflows:
+        d_str = to_tehran_date_str(str(cf.get("timestamp", "")))
+        if not d_str:
+            continue
+        ftype = str(cf.get("flow_type", "")).strip().lower()
+        amt = D(cf.get("amount"))
+        curr = str(cf.get("currency", "")).strip().upper()
+        usdt_val = _cashflow_amount_to_usdt(amt, curr, market_prices, usdt_rls_rate)
+        if usdt_val <= ZERO:
+            continue
+        if ftype == "deposit":
+            daily_cashflows[d_str] += usdt_val
+            daily_deposits[d_str] += usdt_val
+        elif ftype == "withdraw":
+            daily_cashflows[d_str] -= usdt_val
+            daily_withdrawals[d_str] += usdt_val
+
+    # Merge any net_cashflow_usdt recorded in daily_snapshots when cashflows table has no entry for that day
+    for d_str, snap in daily_snapshots.items():
+        if d_str not in daily_cashflows and isinstance(snap, dict):
+            snap_cf = D(snap.get("net_cashflow_usdt"))
+            if snap_cf != ZERO:
+                daily_cashflows[d_str] = snap_cf
+                if snap_cf > ZERO:
+                    daily_deposits[d_str] += snap_cf
+                else:
+                    daily_withdrawals[d_str] += abs(snap_cf)
 
     # 3. Determine start and end date based on timeframe or explicit date range (IRST)
     today = datetime.datetime.now(TEHRAN_TZ).date()
@@ -1071,7 +1177,7 @@ def calculate_equity_curve(
     elif timeframe == "ytd":
         start_date = datetime.date(end_date.year, 1, 1)
     else:  # 'all' or default
-        all_days = sorted(daily_stats.keys())
+        all_days = sorted(set(daily_stats.keys()) | set(daily_cashflows.keys()))
         if all_days:
             try:
                 start_date = datetime.date.fromisoformat(all_days[0])
@@ -1090,12 +1196,16 @@ def calculate_equity_curve(
         period_days.append(cur.strftime("%Y-%m-%d"))
         cur += datetime.timedelta(days=1)
 
-    # 4. Calculate initial equity at start of period
+    # 4. Calculate initial equity at start of period (backing out both PnL and net external cashflows)
     total_period_pnl = sum(
         (D(daily_stats.get(d, {}).get("total_pnl")) for d in period_days),
         ZERO,
     )
-    initial_equity = max(current_portfolio_value - total_period_pnl, HUNDRED)
+    total_period_cf = sum((daily_cashflows.get(d, ZERO) for d in period_days), ZERO)
+    total_deposits_usdt = sum((daily_deposits.get(d, ZERO) for d in period_days), ZERO)
+    total_withdrawals_usdt = sum((daily_withdrawals.get(d, ZERO) for d in period_days), ZERO)
+
+    initial_equity = max(current_portfolio_value - total_period_pnl - total_period_cf, HUNDRED)
 
     # Determine baseline BTC price at start of period
     first_btc_price_raw = btc_prices_map.get(period_days[0]) if period_days else None
@@ -1109,12 +1219,15 @@ def calculate_equity_curve(
     else:
         first_btc_price = D(first_btc_price_raw)
 
-    # 5. Build timeline
+    # 5. Build timeline with Time-Weighted Return (TWR) so deposits/withdrawals never distort returns
     cum_pnl = ZERO
+    running_equity = initial_equity
+    twr_factor = ONE
+    peak_twr_equity = initial_equity
+    max_drawdown_usdt = ZERO
+    peak_equity = initial_equity
     timeline: List[Dict[str, Any]] = []
     last_known_btc = first_btc_price
-    peak_equity = initial_equity
-    max_drawdown_usdt = ZERO
 
     for d_str in period_days:
         st = daily_stats.get(d_str, {})
@@ -1124,14 +1237,28 @@ def calculate_equity_curve(
         vol = D(st.get("volume_usdt"))
         fees = D(st.get("fees_usdt"))
         trades_cnt = st.get("trades_count", 0)
+        d_cf = daily_cashflows.get(d_str, ZERO)
+
+        prev_equity = running_equity
+        # Capital base at start of day including external inflows (Modified Dietz / Start-of-Day TWR)
+        capital_base = max(prev_equity + (d_cf if d_cf > ZERO else ZERO), ONE)
+        daily_ret = (d_pnl / capital_base) if d_pnl != ZERO else ZERO
+        twr_factor = twr_factor * (ONE + daily_ret)
 
         cum_pnl += d_pnl
-        equity = _round_dec(initial_equity + cum_pnl, 2)
-        cum_ret_pct = _round_dec((cum_pnl / initial_equity * HUNDRED), 2) if initial_equity > ZERO else ZERO
+        running_equity = prev_equity + d_cf + d_pnl
+        equity_q = _round_dec(running_equity, 2)
+        daily_ret_pct = _round_dec(daily_ret * HUNDRED, 2)
+        cum_ret_pct = _round_dec((twr_factor - ONE) * HUNDRED, 2)
 
-        if equity > peak_equity:
-            peak_equity = equity
-        dd_usdt = peak_equity - equity
+        if equity_q > peak_equity:
+            peak_equity = equity_q
+
+        # Drawdown measured on cashflow-neutral TWR equity index so withdrawals never look like losses
+        twr_equity_idx = initial_equity * twr_factor
+        if twr_equity_idx > peak_twr_equity:
+            peak_twr_equity = twr_equity_idx
+        dd_usdt = peak_twr_equity - twr_equity_idx
         if dd_usdt > max_drawdown_usdt:
             max_drawdown_usdt = dd_usdt
 
@@ -1154,8 +1281,10 @@ def calculate_equity_curve(
             "daily_pnl": _to_float(d_pnl, 2),
             "spot_pnl": _to_float(s_pnl, 2),
             "futures_pnl": _to_float(f_pnl, 2),
+            "net_cashflow_usdt": _to_float(d_cf, 2),
             "cumulative_pnl": _to_float(cum_pnl, 2),
-            "portfolio_equity": float(equity),
+            "portfolio_equity": float(equity_q),
+            "daily_return_pct": float(daily_ret_pct),
             "cumulative_return_pct": float(cum_ret_pct),
             "volume_usdt": _to_float(vol, 2),
             "fees_usdt": _to_float(fees, 2),
@@ -1165,7 +1294,11 @@ def calculate_equity_curve(
             "alpha_pct": float(alpha_pct),
         })
 
-    max_drawdown_pct = _round_dec((max_drawdown_usdt / peak_equity * HUNDRED), 2) if peak_equity > ZERO else ZERO
+    max_drawdown_pct = (
+        _round_dec((max_drawdown_usdt / peak_twr_equity * HUNDRED), 2)
+        if peak_twr_equity > ZERO
+        else ZERO
+    )
     final_equity = D(timeline[-1]["portfolio_equity"]) if timeline else initial_equity
     net_profit = _round_dec(cum_pnl, 2)
     total_return_pct = D(timeline[-1]["cumulative_return_pct"]) if timeline else ZERO
@@ -1186,6 +1319,10 @@ def calculate_equity_curve(
             "current_equity": _to_float(final_equity, 2),
             "net_profit": float(net_profit),
             "total_return_pct": float(total_return_pct),
+            "total_net_cashflow_usdt": _to_float(total_period_cf, 2),
+            "total_deposits_usdt": _to_float(total_deposits_usdt, 2),
+            "total_withdrawals_usdt": _to_float(total_withdrawals_usdt, 2),
+            "return_methodology": "TWR",
             "peak_equity": _to_float(peak_equity, 2),
             "max_drawdown_usdt": _to_float(max_drawdown_usdt, 2),
             "max_drawdown_pct": float(max_drawdown_pct),

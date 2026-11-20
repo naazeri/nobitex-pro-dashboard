@@ -221,6 +221,32 @@ def _init_db_schema(db_path: Optional[Path] = None):
             );
         """)
 
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS cashflows (
+                id TEXT PRIMARY KEY,
+                flow_type TEXT NOT NULL,
+                currency TEXT NOT NULL,
+                amount REAL NOT NULL,
+                tx_hash TEXT,
+                status TEXT,
+                timestamp TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_cashflows_timestamp ON cashflows(timestamp);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_cashflows_currency ON cashflows(currency);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_cashflows_type ON cashflows(flow_type);")
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS daily_equity_snapshots (
+                date TEXT PRIMARY KEY,
+                total_equity_usdt REAL NOT NULL,
+                net_cashflow_usdt REAL DEFAULT 0.0,
+                source TEXT DEFAULT 'computed',
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
         # Schema migrations
         try:
             cursor.execute("ALTER TABLE positions ADD COLUMN extension_fee REAL DEFAULT 0")
@@ -1290,6 +1316,189 @@ def save_chart_state(
         )
         conn.commit()
         return True
+
+
+_EXCLUDED_CASHFLOW_STATUSES = {
+    "canceled",
+    "cancelled",
+    "rejected",
+    "failed",
+    "expired",
+    "unconfirmed",
+}
+
+
+def upsert_cashflows(
+    records: List[Dict[str, Any]],
+    flow_type: str,
+    db_path: Optional[Path] = None,
+) -> int:
+    """
+    Insert or update deposit/withdrawal cashflow records in SQLite.
+    IDs are namespaced as '{flow_type}:{raw_id}' so deposit & withdraw IDs never collide.
+    """
+    if not records:
+        return 0
+    ftype = (flow_type or "").strip().lower()
+    if ftype not in ("deposit", "withdraw"):
+        raise ValueError("flow_type must be 'deposit' or 'withdraw'")
+
+    init_db(db_path)
+    count = 0
+    with get_db_connection(db_path) as conn:
+        cursor = conn.cursor()
+        for idx, r in enumerate(records):
+            if not isinstance(r, dict):
+                continue
+            tx_obj = r.get("transaction") if isinstance(r.get("transaction"), dict) else {}
+            wallet_obj = r.get("wallet") if isinstance(r.get("wallet"), dict) else {}
+
+            raw_id = r.get("id") or tx_obj.get("id") or r.get("txHash") or r.get("hash")
+            if raw_id is None:
+                continue
+            raw_id_str = str(raw_id).strip()
+            cf_id = raw_id_str if raw_id_str.startswith(f"{ftype}:") else f"{ftype}:{raw_id_str}"
+
+            curr = str(r.get("currency") or wallet_obj.get("currency") or "").strip().upper()
+            if not curr:
+                continue
+
+            try:
+                amount = abs(float(r.get("amount", tx_obj.get("amount", 0.0))))
+            except (ValueError, TypeError):
+                continue
+            if amount <= 0:
+                continue
+
+            tx_hash = str(r.get("txHash") or r.get("hash") or r.get("blockchainUrl") or "").strip()
+            raw_status = r.get("status") or r.get("state")
+            if raw_status is None and "confirmed" in r:
+                raw_status = "confirmed" if r.get("confirmed") else "unconfirmed"
+            status = str(raw_status or "confirmed").strip()
+
+            ts = str(
+                r.get("createdAt")
+                or r.get("created_at")
+                or tx_obj.get("created_at")
+                or r.get("date")
+                or r.get("timestamp")
+                or now_irst().isoformat()
+            ).strip()
+
+            cursor.execute(
+                """
+                INSERT INTO cashflows (id, flow_type, currency, amount, tx_hash, status, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    currency = excluded.currency,
+                    amount = excluded.amount,
+                    tx_hash = excluded.tx_hash,
+                    status = excluded.status,
+                    timestamp = excluded.timestamp
+                """,
+                (cf_id, ftype, curr, amount, tx_hash, status, ts),
+            )
+            count += 1
+        conn.commit()
+    return count
+
+
+def get_cashflows(
+    flow_type: Optional[str] = None,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    confirmed_only: bool = True,
+    db_path: Optional[Path] = None,
+) -> List[Dict[str, Any]]:
+    """Retrieve stored deposit/withdrawal cashflows ordered chronologically."""
+    init_db(db_path)
+    conditions: List[str] = []
+    params: List[Any] = []
+
+    if flow_type:
+        conditions.append("flow_type = ?")
+        params.append(flow_type.strip().lower())
+
+    utc_from, utc_to = irst_date_bounds_to_utc_iso(from_date, to_date)
+    if utc_from:
+        conditions.append("timestamp >= ?")
+        params.append(utc_from)
+    if utc_to:
+        conditions.append("timestamp <= ?")
+        params.append(utc_to)
+
+    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    sql = f"SELECT * FROM cashflows {where_clause} ORDER BY timestamp ASC"
+
+    with get_db_connection(db_path) as conn:
+        rows = [dict(row) for row in conn.execute(sql, params).fetchall()]
+
+    if confirmed_only:
+        rows = [
+            r for r in rows
+            if str(r.get("status") or "").strip().lower() not in _EXCLUDED_CASHFLOW_STATUSES
+        ]
+    return rows
+
+
+def upsert_daily_equity_snapshots(
+    records: List[Dict[str, Any]],
+    db_path: Optional[Path] = None,
+) -> int:
+    """Insert or update daily equity snapshots in SQLite."""
+    if not records:
+        return 0
+    init_db(db_path)
+    count = 0
+    now_str = now_irst().isoformat()
+    with get_db_connection(db_path) as conn:
+        cursor = conn.cursor()
+        for r in records:
+            d_str = str(r.get("date") or "").strip()[:10]
+            if not d_str:
+                continue
+            try:
+                eq = float(r.get("total_equity_usdt", 0.0))
+                cf = float(r.get("net_cashflow_usdt", 0.0))
+            except (ValueError, TypeError):
+                continue
+            source = str(r.get("source") or "computed").strip()
+            cursor.execute(
+                """
+                INSERT INTO daily_equity_snapshots (date, total_equity_usdt, net_cashflow_usdt, source, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(date) DO UPDATE SET
+                    total_equity_usdt = excluded.total_equity_usdt,
+                    net_cashflow_usdt = excluded.net_cashflow_usdt,
+                    source = excluded.source,
+                    updated_at = excluded.updated_at
+                """,
+                (d_str, eq, cf, source, now_str),
+            )
+            count += 1
+        conn.commit()
+    return count
+
+
+def get_daily_equity_snapshots(
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    db_path: Optional[Path] = None,
+) -> Dict[str, Dict[str, Any]]:
+    """Retrieve stored daily equity snapshots keyed by YYYY-MM-DD."""
+    init_db(db_path)
+    conditions: List[str] = []
+    params: List[Any] = []
+    if from_date:
+        conditions.append("date >= ?")
+        params.append(from_date[:10])
+    if to_date:
+        conditions.append("date <= ?")
+        params.append(to_date[:10])
+    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    sql = f"SELECT * FROM daily_equity_snapshots {where_clause} ORDER BY date ASC"
+    with get_db_connection(db_path) as conn:
+        return {row["date"]: dict(row) for row in conn.execute(sql, params).fetchall()}
 
 
 

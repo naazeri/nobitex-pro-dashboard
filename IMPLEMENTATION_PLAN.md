@@ -39,7 +39,7 @@ Phase 1 (DB WAL, Lifespan, IRST Timezone)
 | **Phase 7** ✅ | Dynamic Market Metadata (`/margin/markets/list`, `/v2/options`) | `OPT-01` | Isolated (metadata layer) | Low (Done) |
 | **Phase 8** ✅ | Monetary Precision Migration (`float` → `Decimal`) | `OPT-02` | Isolated (regression-sensitive) | Medium (Done) |
 | **Phase 9** ✅ | Real-Time WebSocket Bridge (Backend Centrifugo → Local WS) | `OPT-03` | Isolated (new subsystem) | High (Done) |
-| **Phase 10** | True Equity Curve & Cashflow Reconciliation | `OPT-04` | Isolated (new tables + TWR math) | Medium |
+| **Phase 10** ✅ | True Equity Curve & Cashflow Reconciliation | `OPT-04` | Isolated (new tables + TWR math) | Medium (Done) |
 | **Phase 11** | Margin Position Actions, Bulk Cancel & User Tier UI | `OPT-05` | Isolated (optional `TRADE` UX) | Medium |
 
 ---
@@ -319,7 +319,7 @@ Phase 1 (DB WAL, Lifespan, IRST Timezone)
 
 ---
 
-## Phase 10: True Historical Equity Curve & Cashflow Reconciliation
+## Phase 10: True Historical Equity Curve & Cashflow Reconciliation ✅ (Completed)
 **Covers:** `OPT-04`  
 **Why isolated:** Introduces new DB tables and changes the equity curve model to separate deposits/withdrawals from trading PnL.
 
@@ -330,18 +330,18 @@ Phase 1 (DB WAL, Lifespan, IRST Timezone)
 - `src/nob/server.py`
 
 ### Tasks
-- [ ] In `NobitexClient`, add:
+- [x] In `NobitexClient`, add:
   - `fetch_portfolio_daily_profit(monthly=True)` → `POST /users/portfolio/last-week-daily-profit`
   - `fetch_portfolio_daily_total_profit(monthly=True)` → `POST /users/portfolio/last-week-daily-total-profit`
-  - `fetch_deposits(page=1, page_size=100)` → `GET /users/wallets/deposits/list`
-  - `fetch_withdrawals(page=1, page_size=100)` → `GET /users/wallets/withdraws/list`
-- [ ] In `db.py`, add tables `cashflows (id, flow_type, currency, amount, tx_hash, status, timestamp)` and `daily_equity_snapshots (date PRIMARY KEY, total_equity_usdt, net_cashflow_usdt, source)`.
-- [ ] In `pnl.py:calculate_equity_curve()`:
-  - Incorporate `net_cashflow_usdt` to compute **Time-Weighted Return (TWR)** so external deposits/withdrawals do not create fake PnL spikes/drops.
-  - Distinguish externally deposited coins from missing trade history in Spot Portfolio.
+  - `fetch_deposits(page=1, page_size=100)` → `GET /users/wallets/deposits/list` (+ `fetch_all_deposits`)
+  - `fetch_withdrawals(page=1, page_size=100)` → `GET /users/wallets/withdraws/list` (+ `fetch_all_withdrawals`)
+- [x] In `db.py`, add tables `cashflows (id, flow_type, currency, amount, tx_hash, status, timestamp)` and `daily_equity_snapshots (date PRIMARY KEY, total_equity_usdt, net_cashflow_usdt, source)` with CRUD helpers.
+- [x] In `pnl.py:calculate_equity_curve()` & `calculate_portfolio()`:
+  - Incorporate `net_cashflow_usdt` to compute **Time-Weighted Return (TWR)** and cashflow-neutral max drawdown so external deposits/withdrawals do not create fake PnL spikes/drops.
+  - Distinguish externally deposited coins (`external_deposit`) from missing trade history (`missing_history`) in Spot Portfolio.
 
 ### Verification & Acceptance Criteria
-- [ ] Depositing `$1,000` USDT increases `portfolio_equity` by `$1,000` while keeping `cumulative_return_pct` and `net_profit` unchanged.
+- [x] Depositing `$1,000` USDT increases `portfolio_equity` by `$1,000` while keeping `cumulative_return_pct` and `net_profit` unchanged (verified by unit tests).
 
 ---
 
