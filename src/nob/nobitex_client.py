@@ -114,21 +114,21 @@ class _EndpointRateLimiter:
             with self._lock:
                 now = self._clock()
                 dq = self._history.setdefault(key, deque())
-                cutoff = now - window_sec
+                cutoff = now - window_sec + 1e-6
                 while dq and dq[0] <= cutoff:
                     dq.popleft()
 
                 if dq and min_spacing > 0:
                     since_last = now - dq[-1]
-                    if since_last < min_spacing:
+                    if since_last + 1e-6 < min_spacing:
                         wait_sec = max(wait_sec, min_spacing - since_last)
 
                 if len(dq) >= max_calls:
                     window_wait = (dq[0] + window_sec) - now
-                    if window_wait > 0:
+                    if window_wait > 1e-6:
                         wait_sec = max(wait_sec, window_wait)
 
-                if wait_sec <= 0.0:
+                if wait_sec <= 1e-6:
                     dq.append(now)
                     return
 
@@ -355,7 +355,7 @@ class NobitexClient:
 
     def fetch_trades_page(
         self,
-        page: int = 1,
+        page: Optional[int] = 1,
         page_size: int = 500,
         src_currency: Optional[str] = None,
         dst_currency: Optional[str] = None,
@@ -363,17 +363,22 @@ class NobitexClient:
         trade_type: Optional[str] = None,
         trade_order: str = "desc",
     ) -> Dict[str, Any]:
-        """Fetch a single page of trades from Nobitex."""
+        """
+        Fetch a single page of trades from Nobitex (GET /market/trades/list).
+        When from_id is provided, 'page' is omitted so page and fromId are never mixed.
+        """
         params: Dict[str, Any] = {
-            "page": page,
-            "pageSize": page_size,
+            "pageSize": min(int(page_size), 500),
             "tradeOrder": trade_order,
         }
+        if from_id is not None:
+            params["fromId"] = int(from_id)
+        elif page is not None:
+            params["page"] = int(page)
+
         if src_currency and dst_currency:
             params["srcCurrency"] = src_currency
             params["dstCurrency"] = dst_currency
-        if from_id is not None:
-            params["fromId"] = from_id
         if trade_type:
             params["tradeType"] = trade_type
 
@@ -389,10 +394,11 @@ class NobitexClient:
         progress_callback: Optional[Callable[[int, int, bool, str], None]] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Fetch all trades across pages.
+        Fetch all trades across pages (up to Nobitex's 180-day retention / 100-page cap).
         progress_callback signature: (page_num, total_trades_so_far, is_done, message)
         """
         all_trades: List[Dict[str, Any]] = []
+        seen_ids: set[int] = set()
         page = 1
 
         while page <= max_pages:
@@ -408,7 +414,12 @@ class NobitexClient:
             )
 
             trades = data.get("trades", [])
-            all_trades.extend(trades)
+            for t in trades:
+                tid = t.get("id")
+                if tid is None or tid not in seen_ids:
+                    if tid is not None:
+                        seen_ids.add(tid)
+                    all_trades.append(t)
 
             has_next = data.get("hasNext", False)
             if not has_next or len(trades) == 0:
@@ -420,6 +431,60 @@ class NobitexClient:
             progress_callback(page, len(all_trades), True, f"موفق: {len(all_trades)} معامله دریافت شد.")
 
         return all_trades
+
+    def fetch_incremental_trades(
+        self,
+        since_id: int,
+        page_size: int = 500,
+        max_batches: int = 50,
+        src_currency: Optional[str] = None,
+        dst_currency: Optional[str] = None,
+        trade_type: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Incrementally fetch all trades with id > since_id using ascending fromId cursor.
+        Never sends 'page' and 'fromId' simultaneously.
+        """
+        effective_page_size = min(int(page_size), 500)
+        cursor_id = int(since_id) + 1
+        collected: List[Dict[str, Any]] = []
+        seen_ids: set[int] = set()
+
+        for _ in range(max_batches):
+            data = self.fetch_trades_page(
+                page=None,
+                page_size=effective_page_size,
+                src_currency=src_currency,
+                dst_currency=dst_currency,
+                from_id=cursor_id,
+                trade_type=trade_type,
+                trade_order="asc",
+            )
+            trades = data.get("trades", [])
+            if not trades:
+                break
+
+            batch_max_id = -1
+            new_in_batch = 0
+            for t in trades:
+                tid = t.get("id")
+                if tid is not None:
+                    tid_int = int(tid)
+                    if tid_int > batch_max_id:
+                        batch_max_id = tid_int
+                    if tid_int in seen_ids:
+                        continue
+                    seen_ids.add(tid_int)
+                collected.append(t)
+                new_in_batch += 1
+
+            has_next = data.get("hasNext")
+            if has_next is False or len(trades) < effective_page_size or new_in_batch == 0 or batch_max_id < cursor_id:
+                break
+
+            cursor_id = batch_max_id + 1
+
+        return collected
 
     def fetch_wallets(self) -> List[Dict[str, Any]]:
         """Fetch all user wallets and their balances (POST /users/wallets/list)."""
@@ -441,12 +506,96 @@ class NobitexClient:
         self, status: str = "active", page: int = 1, page_size: int = 100
     ) -> List[Dict[str, Any]]:
         """
-        Fetch leveraged margin positions from /positions/list.
+        Fetch a single page of leveraged margin positions from /positions/list.
         status can be 'active' (open positions) or 'past' (closed/liquidated positions).
         """
-        params = {"status": status, "page": page, "pageSize": page_size}
+        params = {"status": status, "page": int(page), "pageSize": min(int(page_size), 100)}
         data = self._request("GET", "/positions/list", params=params, auth=True, timeout=15.0)
         return data.get("positions", [])
+
+    def fetch_all_positions(
+        self,
+        status: str = "past",
+        page_size: int = 100,
+        max_pages: int = 10,
+        stop_on_known_ids: Optional[set[int]] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Paginate through GET /positions/list up to max_pages.
+        If stop_on_known_ids is provided (for status='past'), stops early once an entire
+        page consists of already-known closed position IDs to conserve the 30 req/10 min quota.
+        """
+        effective_page_size = min(int(page_size), 100)
+        all_positions: List[Dict[str, Any]] = []
+        seen_ids: set[int] = set()
+
+        for page in range(1, max_pages + 1):
+            params = {"status": status, "page": page, "pageSize": effective_page_size}
+            data = self._request("GET", "/positions/list", params=params, auth=True, timeout=15.0)
+            positions = data.get("positions", [])
+            if not positions:
+                break
+
+            page_ids: List[int] = []
+            for p in positions:
+                pid = p.get("id")
+                if pid is not None:
+                    pid_int = int(pid)
+                    page_ids.append(pid_int)
+                    if pid_int in seen_ids:
+                        continue
+                    seen_ids.add(pid_int)
+                all_positions.append(p)
+
+            if stop_on_known_ids and page_ids and all(pid in stop_on_known_ids for pid in page_ids):
+                break
+
+            has_next = data.get("hasNext")
+            if has_next is False or len(positions) < effective_page_size:
+                break
+
+        return all_positions
+
+    def fetch_position_status(self, position_id: int) -> Dict[str, Any]:
+        """
+        Fetch current status of a single margin position via GET /positions/{positionId}/status.
+        Rate limit: 100 requests / 10 minutes.
+        """
+        pid = int(position_id)
+        data = self._request("GET", f"/positions/{pid}/status", auth=True, timeout=15.0)
+        pos = data.get("position") if isinstance(data.get("position"), dict) else data
+        if "id" not in pos:
+            pos = {**pos, "id": pid}
+        return pos
+
+    def fetch_orders_page(
+        self,
+        status: str = "all",
+        page: Optional[int] = None,
+        page_size: int = 100,
+        from_id: Optional[int] = None,
+        details: int = 2,
+    ) -> Dict[str, Any]:
+        """
+        Fetch a single page of user orders from GET /market/orders/list.
+        Per Nobitex docs, 'page' and 'fromId' MUST NOT be sent simultaneously.
+        With from_id, pageSize up to 1000 is supported.
+        """
+        if page is not None and from_id is not None:
+            raise ValueError("Cannot pass both 'page' and 'from_id' to /market/orders/list")
+
+        params: Dict[str, Any] = {
+            "status": status,
+            "details": details,
+        }
+        if from_id is not None:
+            params["fromId"] = int(from_id)
+            params["pageSize"] = min(int(page_size), 1000)
+        else:
+            params["page"] = int(page if page is not None else 1)
+            params["pageSize"] = min(int(page_size), 100)
+
+        return self._request("GET", "/market/orders/list", params=params, auth=True, timeout=20.0)
 
     def fetch_all_orders(
         self, status: str = "all", page_size: int = 100, max_pages: int = 20
@@ -455,24 +604,81 @@ class NobitexClient:
         Fetch user orders with tradeType ('Spot' vs 'Margin') from /market/orders/list.
         Rate limiting and 429 retries are enforced automatically via _request().
         """
+        effective_page_size = min(int(page_size), 100)
         all_orders: List[Dict[str, Any]] = []
-        page = 1
-        while page <= max_pages:
-            params = {
-                "status": status,
-                "details": 2,
-                "pageSize": page_size,
-                "page": page,
-            }
-            data = self._request("GET", "/market/orders/list", params=params, auth=True, timeout=20.0)
+        seen_ids: set[int] = set()
+
+        for page in range(1, max_pages + 1):
+            data = self.fetch_orders_page(
+                status=status,
+                page=page,
+                page_size=effective_page_size,
+                from_id=None,
+                details=2,
+            )
             orders = data.get("orders", [])
             if not orders:
                 break
-            all_orders.extend(orders)
-            if len(orders) < page_size:
+            for o in orders:
+                oid = o.get("id")
+                if oid is None or oid not in seen_ids:
+                    if oid is not None:
+                        seen_ids.add(oid)
+                    all_orders.append(o)
+            has_next = data.get("hasNext")
+            if has_next is False or len(orders) < effective_page_size:
                 break
-            page += 1
         return all_orders
+
+    def fetch_incremental_orders(
+        self,
+        since_id: int,
+        status: str = "all",
+        page_size: int = 1000,
+        max_batches: int = 20,
+        details: int = 2,
+    ) -> List[Dict[str, Any]]:
+        """
+        Incrementally fetch orders with id > since_id using fromId (never mixing page & fromId).
+        """
+        effective_page_size = min(int(page_size), 1000)
+        cursor_id = int(since_id) + 1
+        collected: List[Dict[str, Any]] = []
+        seen_ids: set[int] = set()
+
+        for _ in range(max_batches):
+            data = self.fetch_orders_page(
+                status=status,
+                page=None,
+                page_size=effective_page_size,
+                from_id=cursor_id,
+                details=details,
+            )
+            orders = data.get("orders", [])
+            if not orders:
+                break
+
+            batch_max_id = -1
+            new_in_batch = 0
+            for o in orders:
+                oid = o.get("id")
+                if oid is not None:
+                    oid_int = int(oid)
+                    if oid_int > batch_max_id:
+                        batch_max_id = oid_int
+                    if oid_int in seen_ids:
+                        continue
+                    seen_ids.add(oid_int)
+                collected.append(o)
+                new_in_batch += 1
+
+            has_next = data.get("hasNext")
+            if has_next is False or len(orders) < effective_page_size or new_in_batch == 0 or batch_max_id < cursor_id:
+                break
+
+            cursor_id = batch_max_id + 1
+
+        return collected
 
     def cancel_order(self, order_id: int) -> Dict[str, Any]:
         """

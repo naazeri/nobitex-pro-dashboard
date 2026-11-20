@@ -302,6 +302,51 @@ def update_order_status(order_id: int, status: str, db_path: Optional[Path] = No
         return cursor.rowcount > 0
 
 
+def get_max_trade_id(db_path: Optional[Path] = None) -> Optional[int]:
+    """Return the highest trade ID currently stored in SQLite, or None if empty."""
+    init_db(db_path)
+    with get_db_connection(db_path) as conn:
+        row = conn.execute("SELECT MAX(id) FROM trades").fetchone()
+        return int(row[0]) if row and row[0] is not None else None
+
+
+def get_max_order_id(db_path: Optional[Path] = None) -> Optional[int]:
+    """Return the highest order ID currently stored in SQLite, or None if empty."""
+    init_db(db_path)
+    with get_db_connection(db_path) as conn:
+        row = conn.execute("SELECT MAX(id) FROM orders").fetchone()
+        return int(row[0]) if row and row[0] is not None else None
+
+
+def get_known_closed_position_ids(db_path: Optional[Path] = None) -> set[int]:
+    """Return IDs of all non-Open (closed/liquidated/expired) positions stored in SQLite."""
+    init_db(db_path)
+    with get_db_connection(db_path) as conn:
+        rows = conn.execute("SELECT id FROM positions WHERE status != 'Open'").fetchall()
+        return {int(row[0]) for row in rows if row[0] is not None}
+
+
+def get_active_position_ids(db_path: Optional[Path] = None) -> set[int]:
+    """Return IDs of all currently Open positions stored in SQLite."""
+    init_db(db_path)
+    with get_db_connection(db_path) as conn:
+        rows = conn.execute("SELECT id FROM positions WHERE status = 'Open'").fetchall()
+        return {int(row[0]) for row in rows if row[0] is not None}
+
+
+def record_last_sync(db_path: Optional[Path] = None) -> str:
+    """Persist current IRST timestamp as metadata['last_sync']."""
+    init_db(db_path)
+    now_str = now_irst().isoformat()
+    with get_db_connection(db_path) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO metadata (key, value) VALUES ('last_sync', ?)",
+            (now_str,),
+        )
+        conn.commit()
+    return now_str
+
+
 def upsert_trades(
     trades: List[Dict[str, Any]],
     order_type_map: Optional[Dict[int, str]] = None,

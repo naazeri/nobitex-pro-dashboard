@@ -51,6 +51,11 @@ from nob.db import (
     save_chart_state,
     get_open_orders,
     update_order_status,
+    get_max_trade_id,
+    get_max_order_id,
+    get_known_closed_position_ids,
+    get_active_position_ids,
+    record_last_sync,
 )
 from nob.nobitex_client import (
     NobitexClient,
@@ -100,6 +105,8 @@ sync_status = {
     "is_syncing": False,
     "last_result": None,
     "last_error": None,
+    "warnings": [],
+    "mode": None,
     "step": None,
 }
 
@@ -208,12 +215,12 @@ def api_get_positions():
     prices = get_market_prices()
     positions = get_positions()
 
-    # If no positions saved yet, fetch directly from Nobitex
+    # If no positions saved yet, fetch directly from Nobitex (paginated)
     if not positions:
         try:
             client = get_nobitex_client()
-            active = client.fetch_positions("active", page_size=100)
-            past = client.fetch_positions("past", page_size=100)
+            active = client.fetch_all_positions("active", page_size=100, max_pages=5)
+            past = client.fetch_all_positions("past", page_size=100, max_pages=10)
             upsert_positions(active + past)
             positions = get_positions()
         except Exception as e:
@@ -402,11 +409,15 @@ def api_delete_journal(entry_type: str, target_id: int):
     return {"status": "ok", "deleted": deleted}
 
 
-def perform_sync():
+def perform_sync(full: bool = False):
     global sync_status
+    warnings_list: List[str] = []
+    mode = "full" if full else "incremental"
     try:
         sync_status["is_syncing"] = True
         sync_status["last_error"] = None
+        sync_status["warnings"] = []
+        sync_status["mode"] = mode
         sync_status["step"] = "Connecting to Nobitex..."
 
         client = get_nobitex_client()
@@ -416,8 +427,11 @@ def perform_sync():
         try:
             wallets = client.fetch_wallets()
             upsert_wallet_snapshots(wallets)
+        except NobitexAuthError as e:
+            warnings_list.append(f"Wallets auth error ({e.code}): {e.message}")
         except Exception as e:
             print("Notice: Wallet fetch failed:", e)
+            warnings_list.append(f"Wallets sync failed: {e}")
 
         # 2. Sync real-time market prices (public)
         sync_status["step"] = "Updating market prices..."
@@ -426,52 +440,96 @@ def perform_sync():
             upsert_market_prices(prices)
         except Exception as e:
             print("Notice: Market prices fetch failed:", e)
+            warnings_list.append(f"Market prices sync failed: {e}")
 
-        # 3. Sync orders to classify tradeType (Spot vs Margin)
+        # 3. Sync orders (incremental via fromId when local orders exist)
         sync_status["step"] = "Fetching user orders..."
-        order_type_map = {}
         try:
-            orders = client.fetch_all_orders(status="all", page_size=100)
-            upsert_orders(orders)
-            order_type_map = {o["id"]: o.get("tradeType", "Spot") for o in orders}
+            max_order_id = None if full else get_max_order_id()
+            if max_order_id is not None:
+                open_orders = client.fetch_all_orders(status="open", page_size=100, max_pages=5)
+                new_orders = client.fetch_incremental_orders(since_id=max_order_id, status="all", page_size=1000)
+                orders = open_orders + new_orders
+            else:
+                orders = client.fetch_all_orders(status="all", page_size=100, max_pages=50)
+            if orders:
+                upsert_orders(orders)
+        except NobitexAuthError as e:
+            warnings_list.append(f"Orders auth error ({e.code}): {e.message}")
         except Exception as e:
             print("Notice: Orders fetch failed:", e)
+            warnings_list.append(f"Orders sync failed: {e}")
 
-        # 4. Sync margin & futures positions
+        # 4. Sync margin & futures positions (full pagination + stale Open reconciliation)
         sync_status["step"] = "Fetching margin positions..."
         pos_count = 0
         try:
-            active_pos = client.fetch_positions("active", page_size=100)
-            past_pos = client.fetch_positions("past", page_size=100)
+            active_pos = client.fetch_all_positions("active", page_size=100, max_pages=5)
+            known_closed = None if full else get_known_closed_position_ids()
+            past_pos = client.fetch_all_positions(
+                "past",
+                page_size=100,
+                max_pages=10,
+                stop_on_known_ids=known_closed,
+            )
             pos_count = upsert_positions(active_pos + past_pos)
+
+            # Reconcile any previously Open positions in SQLite that disappeared from live active
+            live_active_ids = {int(p["id"]) for p in active_pos if p.get("id") is not None}
+            stale_open_ids = get_active_position_ids() - live_active_ids
+            reconciled_positions = []
+            for stale_id in stale_open_ids:
+                try:
+                    updated_pos = client.fetch_position_status(stale_id)
+                    if updated_pos:
+                        reconciled_positions.append(updated_pos)
+                except Exception as rec_err:
+                    print(f"Notice: Failed reconciling position {stale_id}:", rec_err)
+            if reconciled_positions:
+                pos_count += upsert_positions(reconciled_positions)
+        except NobitexAuthError as e:
+            msg = (
+                f"Positions skipped ({e.code}): API key may require TRADE permission for /positions/list."
+            )
+            print("Notice:", msg)
+            warnings_list.append(msg)
         except Exception as e:
             print("Notice: Positions fetch failed:", e)
+            warnings_list.append(f"Positions sync failed: {e}")
 
-        # 5. Sync trades
+        # 5. Sync trades (incremental via fromId when local trades exist)
         sync_status["step"] = "Syncing trade history..."
-        trades = client.fetch_all_trades(page_size=500)
-        saved_count = upsert_trades(trades, order_type_map=order_type_map)
+        max_trade_id = None if full else get_max_trade_id()
+        if max_trade_id is not None:
+            trades = client.fetch_incremental_trades(since_id=max_trade_id, page_size=500)
+        else:
+            trades = client.fetch_all_trades(page_size=500)
+        # Pass order_type_map=None so upsert_trades uses the complete orders table in SQLite
+        saved_count = upsert_trades(trades, order_type_map=None)
+        record_last_sync()
 
+        sync_status["warnings"] = warnings_list
         sync_status["last_result"] = (
-            f"Successfully synced {saved_count} trades, {pos_count} positions, and updated wallets."
+            f"Successfully synced ({mode}) {saved_count} trades, {pos_count} positions, and updated wallets."
         )
     except Exception as e:
         sync_status["last_error"] = str(e)
+        sync_status["warnings"] = warnings_list
     finally:
         sync_status["is_syncing"] = False
         sync_status["step"] = None
 
 
 @app.post("/api/sync")
-def api_sync_trades(background_tasks: BackgroundTasks):
-    """Trigger background sync with Nobitex API."""
+def api_sync_trades(background_tasks: BackgroundTasks, full: bool = False):
+    """Trigger background sync with Nobitex API (incremental by default; pass full=true for full re-sync)."""
     global sync_status
     if sync_status["is_syncing"]:
         return {"status": "in_progress", "message": "Sync is already in progress."}
 
     sync_status["is_syncing"] = True
-    background_tasks.add_task(perform_sync)
-    return {"status": "started", "message": "Synchronization started."}
+    background_tasks.add_task(perform_sync, full=full)
+    return {"status": "started", "mode": "full" if full else "incremental", "message": "Synchronization started."}
 
 
 @app.get("/api/sync/status")
@@ -965,7 +1023,7 @@ def api_get_open_orders(refresh: bool = False):
         "orders": enriched_orders,
         "summary": summary,
         "source": source,
-        "updated_at": datetime.now().isoformat(),
+        "updated_at": now_irst().isoformat(),
     }
     _open_orders_cache = {"timestamp": now, "data": result}
     return result

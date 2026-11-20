@@ -32,7 +32,7 @@ Phase 1 (DB WAL, Lifespan, IRST Timezone)
 | :--- | :--- | :--- | :--- | :--- |
 | **Phase 1** ✅ | Core Infra: SQLite WAL, Lifespan & IRST Timezone | `DB-01`, `BUG-04` (core) | Grouped (foundational infra) | Low (Done) |
 | **Phase 2** ✅ | `NobitexClient` Transport, Rate Limiting & Error Mapping | `API-01`, `API-05` | Grouped (same transport layer) | Medium (Done) |
-| **Phase 3** | Incremental Sync (`fromId`) & Full Positions Pagination | `API-02`, `API-03` | Grouped (same sync pipeline) | Medium |
+| **Phase 3** ✅ | Incremental Sync (`fromId`) & Full Positions Pagination | `API-02`, `API-03` | Grouped (same sync pipeline) | Medium (Done) |
 | **Phase 4** | Surgical Fixes: Open Orders & Calendar Math | `BUG-01`, `BUG-02` | Grouped (small isolated fixes) | Low |
 | **Phase 5** | Spot Portfolio WAC Replay, `-RLS` Markets & Margin Wallets | `BUG-03`, `BUG-04` (SQL) | Isolated (financial core) | Medium |
 | **Phase 6** | Chart UDF 500-Bar Pagination, 7-Day Clamp & Cache | `API-04` | Isolated (charting subsystem) | Low |
@@ -122,7 +122,7 @@ Phase 1 (DB WAL, Lifespan, IRST Timezone)
 
 ---
 
-## Phase 3: Sync Pipeline — Incremental `fromId` Sync & Full Positions Pagination
+## Phase 3: Sync Pipeline — Incremental `fromId` Sync & Full Positions Pagination ✅ (Completed)
 **Covers:** `API-02`, `API-03`  
 **Why grouped:** Both modify the pagination and synchronization loop across `nobitex_client.py`, `db.py`, and `server.py:perform_sync`.
 
@@ -132,12 +132,12 @@ Phase 1 (DB WAL, Lifespan, IRST Timezone)
 - `src/nob/server.py`
 
 ### Tasks
-- [ ] In `src/nob/db.py`, add helper queries:
+- [x] In `src/nob/db.py`, add helper queries:
   - `get_max_trade_id() -> Optional[int]`
   - `get_max_order_id() -> Optional[int]`
   - `get_known_closed_position_ids() -> set[int]`
   - `get_active_position_ids() -> set[int]`
-- [ ] In `src/nob/nobitex_client.py`:
+- [x] In `src/nob/nobitex_client.py`:
   - Fix `fetch_trades_page()`: **omit `page`** whenever `from_id is not None` (never send both).
   - Add `fetch_orders_page(status="all", page=None, page_size=100, from_id=None, details=2)`: enforce mutual exclusion of `page` and `from_id`; when `from_id is not None`, allow `page_size` up to `1000`.
   - Add `fetch_incremental_trades(since_id)` and `fetch_incremental_orders(since_id)` that fetch only new records (`fromId = since_id + 1`).
@@ -145,7 +145,7 @@ Phase 1 (DB WAL, Lifespan, IRST Timezone)
   - Add `fetch_all_positions(status="past", page_size=100, max_pages=10, stop_on_known_ids=None)`:
     - Paginate until `not data.get("hasNext")` or `len(positions) < page_size` or `page > max_pages`.
     - If `stop_on_known_ids` is provided and all IDs on the current page are already in `stop_on_known_ids`, break early to conserve the 30 req/10 min quota.
-- [ ] In `src/nob/server.py`:
+- [x] In `src/nob/server.py`:
   - Update `POST /api/sync` to accept optional `full: bool = False`.
   - In `perform_sync(full=False)`:
     - Default incremental mode uses `fromId = max_id + 1` for orders and trades (plus `status="open"` orders).
@@ -153,9 +153,9 @@ Phase 1 (DB WAL, Lifespan, IRST Timezone)
     - Record permission errors (`NobitexAuthError` on `/positions/list`) cleanly in `sync_status["warnings"]` without aborting spot sync.
 
 ### Verification & Acceptance Criteria
-- [ ] Running `/api/sync` twice in a row performs minimal API calls on the second run (1 call for trades, 1 call for orders, 1 call for active positions).
-- [ ] Unit test verifies `page` is never present in the query string when `from_id` is passed.
-- [ ] Unit test verifies a previously `Open` position in SQLite transitions to `Closed`/`Liquidated` when absent from live `status=active`.
+- [x] Running `/api/sync` twice in a row performs minimal API calls on the second run (1 call for trades, 1 call for orders, 1 call for active positions).
+- [x] Unit test verifies `page` is never present in the query string when `from_id` is passed.
+- [x] Unit test verifies a previously `Open` position in SQLite transitions to `Closed`/`Liquidated` when absent from live `status=active`.
 
 ---
 
