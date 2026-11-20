@@ -354,9 +354,13 @@ def api_get_equity_curve(
     from_date: Optional[str] = None,
     to_date: Optional[str] = None,
     since: Optional[str] = None,
+    include_futures: bool = False,
+    include_cashflows: bool = False,
 ):
     """
     Return continuous daily equity curve, cumulative PnL, and Bitcoin benchmark comparison.
+    By default (Spot tab), strictly reflects pure Spot trading performance without
+    leveraged margin positions or fiat bank cashflows.
     """
     try:
         btc_cache = get_btc_daily_history()
@@ -368,16 +372,21 @@ def api_get_equity_curve(
         btc_cache = get_btc_daily_history()
 
     trades = get_all_crypto_trades_chronological(since_date=None)
-    raw_positions = get_positions(status="past")
     wallets = get_wallet_snapshots()
     prices = get_market_prices()
-    positions = calculate_positions_summary(raw_positions, prices).get("past", [])
-    cashflows = get_cashflows(confirmed_only=True)
-    snapshots = get_daily_equity_snapshots()
+
+    if include_futures:
+        raw_positions = get_positions(status="past")
+        past_positions = calculate_positions_summary(raw_positions, prices).get("past", [])
+    else:
+        past_positions = []
+
+    cf_list = get_cashflows(confirmed_only=True) if include_cashflows else []
+    snapshots = get_daily_equity_snapshots() if include_cashflows else {}
 
     return calculate_equity_curve(
         trades=trades,
-        past_positions=positions,
+        past_positions=past_positions,
         wallets=wallets,
         market_prices=prices,
         btc_prices_map=btc_cache,
@@ -385,7 +394,7 @@ def api_get_equity_curve(
         to_date=to_date,
         since_date=since,
         timeframe=timeframe,
-        cashflows=cashflows,
+        cashflows=cf_list,
         daily_snapshots=snapshots,
     )
 

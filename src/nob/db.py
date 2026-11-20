@@ -1361,7 +1361,11 @@ def upsert_cashflows(
 
             curr = str(r.get("currency") or wallet_obj.get("currency") or "").strip().upper()
             if not curr:
-                continue
+                # Nobitex bank card/cobank/directDebit deposit endpoints don't return top-level currency, defaulting to RLS
+                if "depositType" in r or "userBankAccount" in r or "userBankCard" in r:
+                    curr = "RLS"
+                else:
+                    continue
 
             try:
                 amount = abs(float(r.get("amount", tx_obj.get("amount", 0.0))))

@@ -1177,10 +1177,12 @@ def calculate_equity_curve(
     elif timeframe == "ytd":
         start_date = datetime.date(end_date.year, 1, 1)
     else:  # 'all' or default
-        all_days = sorted(set(daily_stats.keys()) | set(daily_cashflows.keys()))
-        if all_days:
+        trade_days = sorted(daily_stats.keys())
+        all_days = sorted(set(trade_days) | set(daily_cashflows.keys()))
+        target_days = trade_days if trade_days else all_days
+        if target_days:
             try:
-                start_date = datetime.date.fromisoformat(all_days[0])
+                start_date = datetime.date.fromisoformat(target_days[0])
             except ValueError:
                 start_date = end_date - datetime.timedelta(days=365)
         else:
@@ -1205,7 +1207,8 @@ def calculate_equity_curve(
     total_deposits_usdt = sum((daily_deposits.get(d, ZERO) for d in period_days), ZERO)
     total_withdrawals_usdt = sum((daily_withdrawals.get(d, ZERO) for d in period_days), ZERO)
 
-    initial_equity = max(current_portfolio_value - total_period_pnl - total_period_cf, HUNDRED)
+    back_calculated = current_portfolio_value - total_period_pnl - total_period_cf
+    initial_equity = max(back_calculated, ZERO) if back_calculated > ZERO else current_portfolio_value
 
     # Determine baseline BTC price at start of period
     first_btc_price_raw = btc_prices_map.get(period_days[0]) if period_days else None
