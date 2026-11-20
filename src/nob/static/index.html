@@ -159,6 +159,11 @@
             <span v-else-if="priceUpdatedTime" class="text-emerald-400/90 text-[11px] font-mono flex items-center gap-1">
               <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
               <span>• {{ t('pricesUpdated') }}: {{ priceUpdatedTime }}</span>
+              <span v-if="wsConnected" class="px-1.5 py-0.2 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-[10px]">WS</span>
+            </span>
+            <span v-else-if="wsConnected" class="text-emerald-400/90 text-[11px] font-mono flex items-center gap-1">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+              <span>• WS Live</span>
             </span>
           </p>
         </div>
@@ -5266,6 +5271,223 @@
         }
 
         const priceUpdatedTime = ref('');
+        const wsConnected = ref(false);
+        let localWs = null;
+        let wsReconnectTimer = null;
+        let wsReconnectDelay = 2000;
+        let wsPrivateRefreshTimer = null;
+        const tvWsSubscribers = new Map();
+
+        function normalizeWsResolution(res) {
+          const r = String(res || '').trim().toUpperCase();
+          if (r === '1W' || r === 'W') return null;
+          if (r === '1D' || r === 'D') return 'D';
+          if (r === '1H') return '60';
+          if (r === '4H') return '240';
+          if (r === '15M') return '15';
+          if (r === '30M') return '30';
+          if (r === '5M') return '5';
+          if (r === '1M') return '1';
+          return r;
+        }
+
+        function sendWsJson(payload) {
+          if (localWs && localWs.readyState === WebSocket.OPEN) {
+            try {
+              localWs.send(JSON.stringify(payload));
+            } catch (e) {}
+          }
+        }
+
+        function applyWsMarketStats(statsMap) {
+          if (!statsMap || typeof statsMap !== 'object') return;
+          const now = new Date();
+          const hh = String(now.getHours()).padStart(2, '0');
+          const mm = String(now.getMinutes()).padStart(2, '0');
+          const ss = String(now.getSeconds()).padStart(2, '0');
+          priceUpdatedTime.value = `${hh}:${mm}:${ss}`;
+
+          // 1. Update marketDetails latest prices
+          if (marketDetails.value && typeof marketDetails.value === 'object') {
+            for (const [mKey, stat] of Object.entries(statsMap)) {
+              const upperMkt = mKey.toUpperCase();
+              if (marketDetails.value[upperMkt] && stat && stat.latest > 0) {
+                marketDetails.value[upperMkt].latest = stat.latest;
+              }
+            }
+          }
+
+          // 2. Update spot holdings & summary live without triggering REST polling
+          if (Array.isArray(holdings.value) && holdings.value.length > 0) {
+            let holdingsChanged = false;
+            let totalCryptoVal = 0;
+            let totalUnrealized = 0;
+            let totalRealized = 0;
+            for (const h of holdings.value) {
+              const key = `${String(h.symbol || '').toLowerCase()}-usdt`;
+              const stat = statsMap[key];
+              if (stat && stat.latest > 0) {
+                h.current_price = stat.latest;
+                h.day_change = stat.dayChange ?? h.day_change;
+                h.day_high = stat.dayHigh ?? h.day_high;
+                h.day_low = stat.dayLow ?? h.day_low;
+                const qty = Number(h.quantity) || 0;
+                const avgCost = Number(h.avg_cost) || 0;
+                h.current_value = qty * stat.latest;
+                h.is_dust = h.current_value < 1.0;
+                if (qty > 0 && avgCost > 0) {
+                  h.unrealized_pnl = (stat.latest - avgCost) * qty;
+                  h.pnl_pct = ((stat.latest - avgCost) / avgCost) * 100;
+                }
+                h.total_pnl = (Number(h.realized_pnl) || 0) + (Number(h.unrealized_pnl) || 0);
+                holdingsChanged = true;
+              }
+              totalCryptoVal += Number(h.current_value) || 0;
+              totalUnrealized += Number(h.unrealized_pnl) || 0;
+              totalRealized += Number(h.realized_pnl) || 0;
+            }
+            if (holdingsChanged && summary.value) {
+              const usdtCash = Number(summary.value.usdt_cash) || 0;
+              const daiCash = Number(summary.value.dai_cash) || 0;
+              const totalPort = totalCryptoVal + usdtCash + daiCash;
+              const totalPnl = totalRealized + totalUnrealized;
+              const invested = Number(summary.value.total_invested_capital) || 0;
+              summary.value.total_crypto_value = Number(totalCryptoVal.toFixed(2));
+              summary.value.total_portfolio_value = Number(totalPort.toFixed(2));
+              summary.value.total_unrealized_pnl = Number(totalUnrealized.toFixed(2));
+              summary.value.total_pnl = Number(totalPnl.toFixed(2));
+              if (invested > 0) {
+                summary.value.overall_pnl_pct = Number(((totalPnl / invested) * 100).toFixed(2));
+              }
+            }
+          }
+
+          // 3. Update active margin positions mark_price & Liquidation Risk Radar live
+          if (Array.isArray(activePositions.value) && activePositions.value.length > 0) {
+            let posChanged = false;
+            let safeCount = 0;
+            let warnCount = 0;
+            let dangerCount = 0;
+            let highestRisk = null;
+            for (const p of activePositions.value) {
+              const src = String(p.src_currency || '').toLowerCase();
+              const dst = String(p.dst_currency || '').toLowerCase();
+              const stat = statsMap[`${src}-${dst}`];
+              if (stat && (stat.mark > 0 || stat.latest > 0)) {
+                const liveMark = stat.mark > 0 ? stat.mark : stat.latest;
+                p.mark_price = liveMark;
+                const liq = Number(p.liquidation_price) || 0;
+                if (liveMark > 0 && liq > 0) {
+                  const distAmt = Math.abs(liveMark - liq);
+                  const distPct = Number(((distAmt / liveMark) * 100).toFixed(2));
+                  p.liquidation_distance_amount = Number(distAmt.toFixed(2));
+                  p.liquidation_distance_pct = distPct;
+                  p.risk_level = distPct >= 20 ? 'safe' : (distPct >= 10 ? 'warning' : 'danger');
+                }
+                posChanged = true;
+              }
+              if (p.risk_level === 'safe') safeCount++;
+              else if (p.risk_level === 'warning') warnCount++;
+              else if (p.risk_level === 'danger') dangerCount++;
+              if (!highestRisk || (p.liquidation_distance_pct ?? 999) < (highestRisk.liquidation_distance_pct ?? 999)) {
+                highestRisk = p;
+              }
+            }
+            if (posChanged && positionsSummary.value) {
+              positionsSummary.value.safe_count = safeCount;
+              positionsSummary.value.warning_count = warnCount;
+              positionsSummary.value.danger_count = dangerCount;
+              positionsSummary.value.highest_risk_position = highestRisk;
+            }
+          }
+
+          // 4. Update open orders current_price & distance_percent live
+          if (Array.isArray(openOrders.value) && openOrders.value.length > 0) {
+            for (const o of openOrders.value) {
+              const key = `${String(o.base || '').toLowerCase()}-${String(o.quote || '').toLowerCase()}`;
+              const stat = statsMap[key];
+              if (stat && stat.latest > 0) {
+                o.current_price = stat.latest;
+                const ordPrice = Number(o.price) || 0;
+                if (ordPrice > 0) {
+                  o.distance_percent = Number((((ordPrice - stat.latest) / stat.latest) * 100).toFixed(2));
+                }
+              }
+            }
+          }
+        }
+
+        function schedulePrivateWsRefresh(includeTrades = false) {
+          if (wsPrivateRefreshTimer) clearTimeout(wsPrivateRefreshTimer);
+          wsPrivateRefreshTimer = setTimeout(() => {
+            wsPrivateRefreshTimer = null;
+            fetchOpenOrders(false);
+            if (includeTrades) {
+              fetchTrades();
+              fetchPortfolio();
+              fetchStats();
+            }
+          }, 600);
+        }
+
+        function connectLocalWebSocket() {
+          if (wsReconnectTimer) {
+            clearTimeout(wsReconnectTimer);
+            wsReconnectTimer = null;
+          }
+          try {
+            const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${proto}//${window.location.host}/ws`;
+            localWs = new WebSocket(wsUrl);
+            localWs.onopen = () => {
+              wsReconnectDelay = 2000;
+              for (const sub of tvWsSubscribers.values()) {
+                sendWsJson({
+                  action: 'subscribe_candle',
+                  symbol: sub.symbol,
+                  resolution: sub.resolution
+                });
+              }
+            };
+            localWs.onmessage = (evt) => {
+              try {
+                const msg = JSON.parse(evt.data);
+                if (!msg || typeof msg !== 'object') return;
+                if (msg.type === 'status') {
+                  wsConnected.value = Boolean(msg.upstream_connected);
+                } else if (msg.type === 'market_stats' && msg.data) {
+                  wsConnected.value = true;
+                  applyWsMarketStats(msg.data);
+                } else if (msg.type === 'candle' && msg.bar) {
+                  const sym = String(msg.symbol || '').toUpperCase();
+                  const res = normalizeWsResolution(msg.resolution);
+                  for (const sub of tvWsSubscribers.values()) {
+                    if (sub.symbol === sym && sub.resolution === res && typeof sub.callback === 'function') {
+                      sub.callback(msg.bar);
+                    }
+                  }
+                } else if (msg.type === 'private_order') {
+                  schedulePrivateWsRefresh(false);
+                } else if (msg.type === 'private_trade') {
+                  schedulePrivateWsRefresh(true);
+                }
+              } catch (e) {}
+            };
+            localWs.onclose = () => {
+              wsConnected.value = false;
+              localWs = null;
+              wsReconnectTimer = setTimeout(() => {
+                wsReconnectDelay = Math.min(wsReconnectDelay * 1.5, 15000);
+                connectLocalWebSocket();
+              }, wsReconnectDelay);
+            };
+            localWs.onerror = () => {
+              wsConnected.value = false;
+            };
+          } catch (e) {
+            wsConnected.value = false;
+          }
+        }
 
         async function refreshPricesOnly() {
           if (isSyncing.value) return;
@@ -5651,12 +5873,15 @@
             nextTick(() => renderCharts());
           }
 
-          // 1. Auto-trigger sync on page open (per user request)
+          // 1. Connect to local backend WebSocket bridge (ADR-012 compliant)
+          connectLocalWebSocket();
+
+          // 2. Auto-trigger sync on page open (per user request)
           triggerSync();
 
-          // 2. Auto-refresh only market prices every 1 minute (60 seconds)
+          // 3. Fallback REST polling every 60s ONLY when real-time WS is disconnected
           setInterval(() => {
-            if (!isSyncing.value) {
+            if (!isSyncing.value && !wsConnected.value) {
               refreshPricesOnly();
               fetchOpenOrders();
             }
@@ -6402,8 +6627,21 @@
               onErrorCallback(err);
             }
           },
-          subscribeBars: () => {},
-          unsubscribeBars: () => {}
+          subscribeBars: (symbolInfo, resolution, onRealtimeCallback, subscriberUID) => {
+            const sym = String(symbolInfo?.ticker || symbolInfo?.name || chartSymbol.value || '')
+              .replace(/[-/]/g, '')
+              .toUpperCase();
+            const res = normalizeWsResolution(resolution);
+            if (!sym || !res) return;
+            tvWsSubscribers.set(subscriberUID, { symbol: sym, resolution: res, callback: onRealtimeCallback });
+            sendWsJson({ action: 'subscribe_candle', symbol: sym, resolution: res });
+          },
+          unsubscribeBars: (subscriberUID) => {
+            const sub = tvWsSubscribers.get(subscriberUID);
+            if (!sub) return;
+            tvWsSubscribers.delete(subscriberUID);
+            sendWsJson({ action: 'unsubscribe_candle', symbol: sub.symbol, resolution: sub.resolution });
+          }
         };
 
         function initTradingViewChart() {
@@ -6893,6 +7131,7 @@
           getMarketBaseIcon,
           handleImgError,
           priceUpdatedTime,
+          wsConnected,
           refreshPricesOnly,
           // Calendar exports
           calendarData,

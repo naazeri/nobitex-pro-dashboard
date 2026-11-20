@@ -15,7 +15,7 @@ from nob.time_utils import IRST, now_irst, today_irst_str, ts_to_irst_date_str
 TEHRAN_TZ = IRST
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Response
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -72,12 +72,14 @@ from nob.pnl import (
     calculate_daily_pnl_calendar,
     calculate_equity_curve,
 )
+from nob.ws_bridge import NobitexWSBridge
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 _nobitex_client: Optional[NobitexClient] = None
 _client_lock = threading.Lock()
+_ws_bridge: Optional[NobitexWSBridge] = None
 
 
 def get_nobitex_client() -> NobitexClient:
@@ -90,12 +92,32 @@ def get_nobitex_client() -> NobitexClient:
     return _nobitex_client
 
 
+def _invalidate_open_orders_cache() -> None:
+    global _open_orders_cache
+    _open_orders_cache = {"timestamp": 0.0, "data": None}
+
+
+def get_ws_bridge() -> NobitexWSBridge:
+    """Return shared singleton NobitexWSBridge."""
+    global _ws_bridge
+    if _ws_bridge is None:
+        _ws_bridge = NobitexWSBridge(
+            client_factory=get_nobitex_client,
+            on_order_update=_invalidate_open_orders_cache,
+        )
+    return _ws_bridge
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
     get_nobitex_client()
+    bridge = get_ws_bridge()
+    await bridge.start()
     yield
-    global _nobitex_client
+    await bridge.stop()
+    global _nobitex_client, _ws_bridge
+    _ws_bridge = None
     if _nobitex_client is not None:
         _nobitex_client.close()
         _nobitex_client = None
@@ -1180,6 +1202,38 @@ def api_cancel_order(req: CancelOrderRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==========================================
+# REAL-TIME LOCAL WEBSOCKET BRIDGE
+# ==========================================
+
+@app.get("/api/ws/status")
+def api_ws_status():
+    """Return diagnostic status of the backend Nobitex Centrifugo WebSocket bridge."""
+    return get_ws_bridge().get_status()
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """
+    Local WebSocket endpoint (ws://127.0.0.1:8080/ws) for Vue 3 dashboard tabs.
+    Proxies normalized real-time market stats, candles, and private order/trade updates
+    from NobitexWSBridge while honoring ADR-012 (browser never connects externally).
+    """
+    await websocket.accept()
+    bridge = get_ws_bridge()
+    await bridge.register_client(websocket)
+    try:
+        while True:
+            msg = await websocket.receive_json()
+            await bridge.handle_client_message(websocket, msg)
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        await bridge.unregister_client(websocket)
 
 
 # Serve index.html

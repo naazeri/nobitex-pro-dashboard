@@ -50,6 +50,8 @@ ENDPOINT_RATE_LIMITS: Dict[str, Tuple[int, float, float]] = {
     "/market/udf/history": (55, 60.0, 1.05),          # Official: 60 / min
     "/margin/markets/list": (28, 60.0, 2.05),         # Official: 30 / min
     "/v2/options": (28, 60.0, 1.0),                   # Public system options
+    "/users/profile": (28, 60.0, 1.0),                # User profile & websocketAuthParam
+    "/auth/ws/token/": (25, 60.0, 1.0),               # WebSocket JWT token (1200s TTL)
 }
 
 _NUMERIC_SEGMENT_RE = re.compile(r"/\d+(?=/|$)")
@@ -785,6 +787,37 @@ class NobitexClient:
         from public GET /v2/options.
         """
         return self._request("GET", "/v2/options", auth=False, timeout=15.0)
+
+    def fetch_user_profile(self) -> Dict[str, Any]:
+        """
+        Fetch authenticated user profile via GET /users/profile.
+        Contains 'websocketAuthParam' used to subscribe to private Centrifugo channels.
+        """
+        data = self._request("GET", "/users/profile", auth=True, timeout=15.0)
+        profile = data.get("profile")
+        return profile if isinstance(profile, dict) else data
+
+    def fetch_ws_token(self) -> str:
+        """
+        Fetch short-lived Centrifugo JWT token (1200s TTL) via GET /auth/ws/token/.
+        Requires READ permission on API key.
+        """
+        data = self._request(
+            "GET",
+            "/auth/ws/token/",
+            auth=True,
+            timeout=15.0,
+            check_status_ok=False,
+        )
+        token = data.get("token")
+        if not token or not isinstance(token, str):
+            raise NobitexAPIError(
+                200,
+                "MissingWSToken",
+                "Nobitex /auth/ws/token/ did not return a token",
+                payload=data,
+            )
+        return token
 
     def cancel_order(self, order_id: int) -> Dict[str, Any]:
         """

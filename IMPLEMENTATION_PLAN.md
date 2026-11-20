@@ -38,7 +38,7 @@ Phase 1 (DB WAL, Lifespan, IRST Timezone)
 | **Phase 6** ✅ | Chart UDF 500-Bar Pagination, 7-Day Clamp & Cache | `API-04` | Isolated (charting subsystem) | Low (Done) |
 | **Phase 7** ✅ | Dynamic Market Metadata (`/margin/markets/list`, `/v2/options`) | `OPT-01` | Isolated (metadata layer) | Low (Done) |
 | **Phase 8** ✅ | Monetary Precision Migration (`float` → `Decimal`) | `OPT-02` | Isolated (regression-sensitive) | Medium (Done) |
-| **Phase 9** | Real-Time WebSocket Bridge (Backend Centrifugo → Local WS) | `OPT-03` | Isolated (new subsystem) | High |
+| **Phase 9** ✅ | Real-Time WebSocket Bridge (Backend Centrifugo → Local WS) | `OPT-03` | Isolated (new subsystem) | High (Done) |
 | **Phase 10** | True Equity Curve & Cashflow Reconciliation | `OPT-04` | Isolated (new tables + TWR math) | Medium |
 | **Phase 11** | Margin Position Actions, Bulk Cancel & User Tier UI | `OPT-05` | Isolated (optional `TRADE` UX) | Medium |
 
@@ -289,33 +289,33 @@ Phase 1 (DB WAL, Lifespan, IRST Timezone)
 
 ---
 
-## Phase 9: Real-Time WebSocket Proxy (Backend Centrifugo Client → Local WS Bridge)
+## Phase 9: Real-Time WebSocket Proxy (Backend Centrifugo Client → Local WS Bridge) ✅ (Completed)
 **Covers:** `OPT-03`  
 **Why isolated:** Major new real-time subsystem; isolating it protects existing REST functionality and guarantees fallback to REST polling if WS disconnects.
 
 ### Files to Create / Modify
 - **Create:** `src/nob/ws_bridge.py`
-- **Modify:** `pyproject.toml` (add `websockets` if not already installed via `uvicorn[standard]`), `src/nob/nobitex_client.py`, `src/nob/server.py`, `src/nob/static/index.html`
+- **Modify:** `pyproject.toml` (added `websockets>=12.0`), `src/nob/nobitex_client.py`, `src/nob/server.py`, `src/nob/static/index.html`
 
 ### Tasks
-- [ ] In `NobitexClient`, add:
+- [x] In `NobitexClient`, add:
   - `fetch_user_profile()` → `GET /users/profile` (extract `websocketAuthParam`).
   - `fetch_ws_token()` → `GET /auth/ws/token/` (JWT with 1200s TTL).
-- [ ] Build `src/nob/ws_bridge.py` (`NobitexWSBridge`):
+- [x] Build `src/nob/ws_bridge.py` (`NobitexWSBridge`):
   - Runs as an `asyncio` background task started/stopped in FastAPI `lifespan`.
   - Connects to `wss://ws.nobitex.ir/connection/websocket` (plain Centrifugo JSON protocol; respond to empty `{}` ping with `{}` within 20s; do NOT enable `delta: 'fossil'` unless using an official Fossil decoder).
-  - Subscribes to `public:market-stats-all` (updates in-memory prices + `mark` prices for Liquidation Risk Radar) and on-demand `public:candle-{SYMBOL}-{RESOLUTION}`.
+  - Subscribes to `public:market-stats-all` (updates in-memory prices + `mark` prices for Liquidation Risk Radar) and on-demand ref-counted `public:candle-{SYMBOL}-{RESOLUTION}`.
   - If API keys are present, refreshes JWT every ~1000s and subscribes to `private:orders#{websocketAuthParam}` and `private:trades#{websocketAuthParam}` (using `time` ms field, NOT deprecated `timestamp`), immediately upserting fills/order updates into SQLite.
-  - Exposes local FastAPI WebSocket endpoint `ws://127.0.0.1:8080/ws` to broadcast normalized events to connected Vue 3 tabs.
-- [ ] In `src/nob/static/index.html`:
+  - Exposes local FastAPI WebSocket endpoint `ws://127.0.0.1:8080/ws` (plus `/api/ws/status`) to broadcast normalized events to connected Vue 3 tabs.
+- [x] In `src/nob/static/index.html`:
   - Connect to `ws://127.0.0.1:8080/ws` (100% local, honors ADR-012 and avoids Nobitex browser `Origin` 403 block).
   - Update spot prices, open orders, and Liquidation Risk Radar live from WS events; pause REST price polling while WS is connected (fallback to polling if WS drops).
   - Wire TradingView `subscribeBars` / `unsubscribeBars` to local WS candle updates.
 
 ### Verification & Acceptance Criteria
-- [ ] Live prices and `mark` price update in UI without triggering `POST /api/prices/refresh`.
-- [ ] Active TradingView candle updates smoothly every ~10s.
-- [ ] Disconnecting internet gracefully falls back to offline local SQLite mode without crashing the server.
+- [x] Live prices and `mark` price update in UI without triggering `POST /api/prices/refresh`.
+- [x] Active TradingView candle updates smoothly every ~10s via ref-counted local WS subscriptions.
+- [x] Disconnecting internet gracefully falls back to offline local SQLite mode without crashing the server.
 
 ---
 
