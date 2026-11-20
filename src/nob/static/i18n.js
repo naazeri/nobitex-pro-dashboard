@@ -430,6 +430,9 @@ export const TRANSLATIONS = {
 
     // Phase 11: Advanced Margin Actions, Bulk Cancel & Account Tier
     userLevelBadge: "Level {level}",
+    userLevelVerified: "Verified",
+    userLevelBasic: "Level 1 (Basic)",
+    userLevelTrader: "Level 3 (Trader)",
     userVipBadge: "VIP {vip}",
     tradePermissionRequired: "Your API key does not have TRADE permission. Please enable TRADE permission in Nobitex API settings to perform this action.",
     colPosActions: "Actions",
@@ -882,6 +885,9 @@ export const TRANSLATIONS = {
 
     // Phase 11: Advanced Margin Actions, Bulk Cancel & Account Tier
     userLevelBadge: "سطح {level}",
+    userLevelVerified: "تاییدشده",
+    userLevelBasic: "سطح ۱ (پایه)",
+    userLevelTrader: "سطح ۳ (حرفه‌ای)",
     userVipBadge: "VIP {vip}",
     tradePermissionRequired: "کلید API شما دسترسی معامله (TRADE) ندارد. برای انجام این عملیات، دسترسی TRADE را در تنظیمات API نوبیتکس فعال کنید.",
     colPosActions: "عملیات",

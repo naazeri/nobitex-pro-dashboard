@@ -1446,6 +1446,7 @@ def api_get_user_profile(refresh: bool = False):
     except Exception:
         pass
 
+    options = profile.get("options") if isinstance(profile.get("options"), dict) else {}
     user_level = (
         limitations.get("userLevel")
         if isinstance(limitations, dict) and limitations.get("userLevel") is not None
@@ -1453,8 +1454,8 @@ def api_get_user_profile(refresh: bool = False):
     )
     vip_level = (
         profile.get("vipLevel")
-        if profile.get("vipLevel") is not None
-        else (limitations.get("vipLevel") if isinstance(limitations, dict) else None)
+        or options.get("vipLevel")
+        or (limitations.get("vipLevel") if isinstance(limitations, dict) else None)
     )
 
     payload = {

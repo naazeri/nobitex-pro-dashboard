@@ -152,7 +152,7 @@
             <h1 class="text-xl sm:text-2xl font-bold tracking-tight text-white">{{ t('appTitle') }}</h1>
             <span class="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 font-mono">{{ t('version') }}</span>
             <span v-if="userProfile && userProfile.level !== null && userProfile.level !== undefined" class="text-[11px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/30 font-mono">
-              {{ t('userLevelBadge', { level: userProfile.level }) }}
+              {{ formatUserLevel(userProfile.level) }}
             </span>
             <span v-if="userProfile && userProfile.vip_level" class="text-[11px] px-2 py-0.5 rounded-full bg-purple-500/15 text-purple-300 border border-purple-500/30 font-mono">
               {{ t('userVipBadge', { vip: userProfile.vip_level }) }}
@@ -4216,7 +4216,7 @@
   <!-- Main Vue 3 Application -->
   <script type="module">
     import { createApp, ref, reactive, computed, onMounted, nextTick, watch } from '/static/vendor/vue.esm-browser.prod.js';
-    import { TRANSLATIONS, formatDate } from '/static/i18n.js';
+    import { TRANSLATIONS, formatDate } from '/static/i18n.js?v=2.1.2';
 
     createApp({
       setup() {
@@ -4247,8 +4247,32 @@
           renderCharts();
         }
 
-        function t(key) {
-          return TRANSLATIONS[currentLang.value]?.[key] || TRANSLATIONS.en?.[key] || key;
+        function t(key, params = {}) {
+          let text = TRANSLATIONS[currentLang.value]?.[key] || TRANSLATIONS.en?.[key] || key;
+          if (params && typeof params === 'object') {
+            for (const [k, v] of Object.entries(params)) {
+              text = text.replace(new RegExp(`\\{${k}\\}`, 'g'), v !== null && v !== undefined ? v : '');
+            }
+          }
+          return text;
+        }
+
+        function formatUserLevel(lvl) {
+          if (lvl === null || lvl === undefined || lvl === '') return '';
+          const s = String(lvl).trim().toLowerCase();
+          if (s === 'verified' || s === '90') {
+            return currentLang.value === 'fa' ? 'سطح تاییدشده' : 'Verified Level';
+          }
+          if (s === 'basic' || s === 'unverified' || s === '10' || s === '1') {
+            return currentLang.value === 'fa' ? 'سطح ۱ (پایه)' : 'Level 1 (Basic)';
+          }
+          if (s === '2' || s === '20') {
+            return currentLang.value === 'fa' ? 'سطح ۲' : 'Level 2';
+          }
+          if (s === 'trader' || s === '3' || s === '30') {
+            return currentLang.value === 'fa' ? 'سطح ۳ (حرفه‌ای)' : 'Level 3 (Trader)';
+          }
+          return t('userLevelBadge', { level: lvl });
         }
 
         function switchTab(tab) {
@@ -7355,6 +7379,7 @@
           closeCancelModal,
           confirmCancelOrder,
           userProfile,
+          formatUserLevel,
           isCollateralModalOpen,
           isClosePosModalOpen,
           isBulkCancelModalOpen,
