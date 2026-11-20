@@ -2,14 +2,13 @@ import io
 import csv
 import time
 import threading
-import urllib.request
 import json
 import webbrowser
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime, timezone, timedelta
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 
 from nob.time_utils import IRST, now_irst, today_irst_str, ts_to_irst_date_str
 
@@ -251,28 +250,28 @@ def api_get_pnl_calendar(
 def sync_btc_history_if_needed():
     """
     Ensure BTC daily closes are cached in SQLite.
-    Fetches daily candles from Nobitex UDF API if needed.
+    Fetches daily candles via NobitexClient.fetch_udf_history (paginated & rate-limited).
     """
     try:
-        import urllib.request
-        import json
-        import time
-
         now = int(time.time())
         from_ts = now - (365 * 86400)
-        url = f"https://apiv2.nobitex.ir/market/udf/history?symbol=BTCUSDT&resolution=D&from={from_ts}&to={now}"
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read().decode())
-            if data.get("s") == "ok":
-                timestamps = data.get("t", [])
-                closes = data.get("c", [])
-                records = []
-                for ts, c in zip(timestamps, closes):
-                    d_str = ts_to_irst_date_str(ts)
-                    records.append({"date": d_str, "close_price": float(c)})
-                if records:
-                    upsert_btc_daily_history(records)
+        client = get_nobitex_client()
+        data = client.fetch_udf_history(
+            symbol="BTCUSDT",
+            resolution="D",
+            from_ts=from_ts,
+            to_ts=now,
+            max_pages=3,
+        )
+        if data.get("s") == "ok":
+            timestamps = data.get("t", [])
+            closes = data.get("c", [])
+            records = []
+            for ts, c in zip(timestamps, closes):
+                d_str = ts_to_irst_date_str(ts)
+                records.append({"date": d_str, "close_price": float(c)})
+            if records:
+                upsert_btc_daily_history(records)
     except Exception as e:
         print("Notice: Could not refresh BTC history from Nobitex online (using local cache):", e)
 
@@ -674,8 +673,35 @@ class ChartStateRequest(BaseModel):
     timeframe: Optional[str] = "1D"
 
 
-# In-memory candle cache: key -> (expire_time, data)
-_candle_cache: Dict[str, Tuple[float, Any]] = {}
+# Bounded LRU + TTL candle cache (prevents unbounded memory growth)
+MAX_CANDLE_CACHE_ENTRIES = 256
+CANDLE_CACHE_TTL_SEC = 60.0
+_INTRADAY_7D_RESOLUTIONS = {"1", "5", "15", "30"}
+_candle_cache_lock = threading.Lock()
+_candle_cache: "OrderedDict[str, Tuple[float, Any]]" = OrderedDict()
+
+
+def _get_cached_candles(cache_key: str) -> Optional[Any]:
+    now_ts = time.time()
+    with _candle_cache_lock:
+        entry = _candle_cache.get(cache_key)
+        if entry is None:
+            return None
+        expires_at, data = entry
+        if expires_at <= now_ts:
+            _candle_cache.pop(cache_key, None)
+            return None
+        _candle_cache.move_to_end(cache_key)
+        return data
+
+
+def _set_cached_candles(cache_key: str, data: Any, ttl_sec: float = CANDLE_CACHE_TTL_SEC) -> None:
+    expires_at = time.time() + ttl_sec
+    with _candle_cache_lock:
+        _candle_cache[cache_key] = (expires_at, data)
+        _candle_cache.move_to_end(cache_key)
+        while len(_candle_cache) > MAX_CANDLE_CACHE_ENTRIES:
+            _candle_cache.popitem(last=False)
 
 
 @app.get("/api/chart/candles")
@@ -686,8 +712,8 @@ def api_get_candles(
     to_ts: Optional[int] = None,
 ):
     """
-    Fetch OHLCV candles from Nobitex UDF API with in-memory caching and weekly aggregation.
-    Supports resolutions: 15, 30, 60 (1H), 240 (4H), D (1D), 1W (Weekly).
+    Fetch OHLCV candles from Nobitex UDF API with 500-bar pagination, bounded LRU/TTL cache,
+    7-day intraday clamp (1/5/15/30m), and weekly aggregation (ADR-006).
     """
     clean_symbol = symbol.replace("-", "").replace("/", "").upper()
 
@@ -717,39 +743,60 @@ def api_get_candles(
     if to_ts is None:
         to_ts = now
 
-    if from_ts is None:
+    # Nobitex Mehr 1405 limit: intraday resolutions (1, 5, 15, 30) only retain last 7 days
+    if res_norm in _INTRADAY_7D_RESOLUTIONS:
+        min_intraday_from = now - (7 * 86400)
+        if to_ts <= min_intraday_from:
+            return {
+                "status": "no_data",
+                "symbol": clean_symbol,
+                "resolution": res_norm,
+                "candles": [],
+            }
+        if from_ts is None:
+            from_ts = min_intraday_from
+        else:
+            from_ts = max(int(from_ts), min_intraday_from)
+    elif from_ts is None:
         if res_norm == "1W":
             from_ts = to_ts - (5 * 365 * 86400)  # 5 years for weekly
         elif res_norm == "D":
-            from_ts = to_ts - (365 * 86400)  # 1 year
+            from_ts = to_ts - (365 * 86400)      # 1 year
         elif res_norm in ["60", "240"]:
-            from_ts = to_ts - (60 * 86400)   # 60 days
+            from_ts = to_ts - (60 * 86400)       # 60 days
         else:
-            from_ts = to_ts - (14 * 86400)   # 14 days
+            from_ts = to_ts - (7 * 86400)        # 7 days default
 
     cache_key = f"{clean_symbol}:{res_norm}:{from_ts // 60}:{to_ts // 60}"
-    cached = _candle_cache.get(cache_key)
-    if cached and cached[0] > time.time():
-        return cached[1]
+    cached = _get_cached_candles(cache_key)
+    if cached is not None:
+        return cached
 
     fetch_res = "D" if res_norm == "1W" else res_norm
     fetch_from = from_ts - (7 * 86400) if res_norm == "1W" else from_ts
 
-    url = f"https://apiv2.nobitex.ir/market/udf/history?symbol={clean_symbol}&resolution={fetch_res}&from={fetch_from}&to={to_ts}"
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
-
+    client = get_nobitex_client()
     try:
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            data = json.loads(resp.read().decode())
-    except urllib.error.HTTPError as e:
-        if e.code == 403:
+        data = client.fetch_udf_history(
+            symbol=clean_symbol,
+            resolution=fetch_res,
+            from_ts=fetch_from,
+            to_ts=to_ts,
+            max_pages=10,
+        )
+    except NobitexAuthError as e:
+        if e.status_code == 403:
             return {
                 "status": "restricted",
                 "symbol": clean_symbol,
                 "message": "Access restricted by exchange (HTTP 403 Forbidden)",
                 "candles": [],
             }
-        raise HTTPException(status_code=502, detail=f"Nobitex UDF Error: HTTP {e.code}")
+        raise HTTPException(status_code=502, detail=f"Nobitex UDF Error: HTTP {e.status_code}")
+    except NobitexRateLimitError as e:
+        raise HTTPException(status_code=429, detail=f"Nobitex UDF Rate Limit: {e.message}")
+    except NobitexAPIError as e:
+        raise HTTPException(status_code=502, detail=f"Nobitex UDF Error: {e.message}")
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Nobitex UDF Network Error: {str(e)}")
 
@@ -805,7 +852,7 @@ def api_get_candles(
         "candles": candles,
     }
 
-    _candle_cache[cache_key] = (time.time() + 60, result)
+    _set_cached_candles(cache_key, result)
     return result
 
 

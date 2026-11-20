@@ -685,6 +685,89 @@ class NobitexClient:
 
         return collected
 
+    def fetch_udf_history(
+        self,
+        symbol: str,
+        resolution: str,
+        from_ts: int,
+        to_ts: int,
+        max_pages: int = 10,
+        countback: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Fetch OHLCV candles from public GET /market/udf/history with 500-bar pagination.
+        Loops page=1..max_pages, deduplicating and sorting bars ascending by timestamp 't'.
+        Rate limit: 60 req/min (enforced via _request).
+        """
+        bars_by_ts: Dict[int, Tuple[float, float, float, float, float]] = {}
+        last_status = "no_data"
+
+        for page in range(1, max(1, int(max_pages)) + 1):
+            params: Dict[str, Any] = {
+                "symbol": symbol,
+                "resolution": resolution,
+                "from": int(from_ts),
+                "to": int(to_ts),
+                "page": page,
+            }
+            if countback is not None:
+                params["countback"] = int(countback)
+
+            data = self._request(
+                "GET",
+                "/market/udf/history",
+                params=params,
+                auth=False,
+                timeout=12.0,
+                check_status_ok=False,
+            )
+
+            s_val = data.get("s")
+            if s_val != "ok":
+                if page == 1:
+                    last_status = s_val or "no_data"
+                break
+
+            last_status = "ok"
+            t_arr = data.get("t", []) or []
+            o_arr = data.get("o", []) or []
+            h_arr = data.get("h", []) or []
+            l_arr = data.get("l", []) or []
+            c_arr = data.get("c", []) or []
+            v_arr = data.get("v", []) or []
+
+            if not t_arr:
+                break
+
+            new_in_page = 0
+            for idx, ts in enumerate(t_arr):
+                ts_int = int(ts)
+                if ts_int not in bars_by_ts:
+                    new_in_page += 1
+                o_val = float(o_arr[idx]) if idx < len(o_arr) else 0.0
+                h_val = float(h_arr[idx]) if idx < len(h_arr) else o_val
+                l_val = float(l_arr[idx]) if idx < len(l_arr) else o_val
+                c_val = float(c_arr[idx]) if idx < len(c_arr) else o_val
+                v_val = float(v_arr[idx]) if idx < len(v_arr) and v_arr[idx] is not None else 0.0
+                bars_by_ts[ts_int] = (o_val, h_val, l_val, c_val, v_val)
+
+            if len(t_arr) < 500 or new_in_page == 0:
+                break
+
+        if not bars_by_ts:
+            return {"s": last_status, "t": [], "o": [], "h": [], "l": [], "c": [], "v": []}
+
+        sorted_ts = sorted(bars_by_ts.keys())
+        return {
+            "s": "ok",
+            "t": sorted_ts,
+            "o": [bars_by_ts[ts][0] for ts in sorted_ts],
+            "h": [bars_by_ts[ts][1] for ts in sorted_ts],
+            "l": [bars_by_ts[ts][2] for ts in sorted_ts],
+            "c": [bars_by_ts[ts][3] for ts in sorted_ts],
+            "v": [bars_by_ts[ts][4] for ts in sorted_ts],
+        }
+
     def cancel_order(self, order_id: int) -> Dict[str, Any]:
         """
         Cancel an open order via POST /market/orders/update-status.

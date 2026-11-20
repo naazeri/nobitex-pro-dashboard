@@ -35,7 +35,7 @@ Phase 1 (DB WAL, Lifespan, IRST Timezone)
 | **Phase 3** ✅ | Incremental Sync (`fromId`) & Full Positions Pagination | `API-02`, `API-03` | Grouped (same sync pipeline) | Medium (Done) |
 | **Phase 4** ✅ | Surgical Fixes: Open Orders & Calendar Math | `BUG-01`, `BUG-02` | Grouped (small isolated fixes) | Low (Done) |
 | **Phase 5** ✅ | Spot Portfolio WAC Replay, `-RLS` Markets & Margin Wallets | `BUG-03`, `BUG-04` (SQL) | Isolated (financial core) | Medium (Done) |
-| **Phase 6** | Chart UDF 500-Bar Pagination, 7-Day Clamp & Cache | `API-04` | Isolated (charting subsystem) | Low |
+| **Phase 6** ✅ | Chart UDF 500-Bar Pagination, 7-Day Clamp & Cache | `API-04` | Isolated (charting subsystem) | Low (Done) |
 | **Phase 7** | Dynamic Market Metadata (`/margin/markets/list`, `/v2/options`) | `OPT-01` | Isolated (metadata layer) | Low |
 | **Phase 8** | Monetary Precision Migration (`float` → `Decimal`) | `OPT-02` | Isolated (regression-sensitive) | Medium |
 | **Phase 9** | Real-Time WebSocket Bridge (Backend Centrifugo → Local WS) | `OPT-03` | Isolated (new subsystem) | High |
@@ -220,7 +220,7 @@ Phase 1 (DB WAL, Lifespan, IRST Timezone)
 
 ---
 
-## Phase 6: Charting UDF Pagination, 7-Day Intraday Clamp & Bounded Cache
+## Phase 6: Charting UDF Pagination, 7-Day Intraday Clamp & Bounded Cache ✅ (Completed)
 **Covers:** `API-04`  
 **Why isolated:** Self-contained within the OHLC/charting subsystem; ensures TradingView ADR-005 & ADR-006 stay intact.
 
@@ -229,10 +229,10 @@ Phase 1 (DB WAL, Lifespan, IRST Timezone)
 - `src/nob/server.py`
 
 ### Tasks
-- [ ] Add `NobitexClient.fetch_udf_history(symbol, resolution, from_ts, to_ts, max_pages=10)` using `_request(..., auth=False)`:
+- [x] Add `NobitexClient.fetch_udf_history(symbol, resolution, from_ts, to_ts, max_pages=10)` using `_request(..., auth=False)`:
   - Loop `page=1..max_pages` (or chunk time windows so each request spans `<= 500` bars), merging arrays `t, o, h, l, c, v` and deduplicating/sorting by `t`.
   - Stop when `s != "ok"` or returned bar count `< 500`.
-- [ ] In `src/nob/server.py`:
+- [x] In `src/nob/server.py`:
   - Route both `api_get_candles()` and `sync_btc_history_if_needed()` through `client.fetch_udf_history(...)` (removing raw `urllib.request` and `Mozilla/5.0` headers).
   - For intraday resolutions `1`, `5`, `15`, `30`, clamp default `from_ts` to `max(from_ts, now - 7 * 86400)` per Nobitex Mehr 1405 changelog.
   - Replace unbounded `_candle_cache` dict with a bounded LRU/TTL cache (`MAX_CANDLE_CACHE_ENTRIES = 256`).
@@ -241,9 +241,9 @@ Phase 1 (DB WAL, Lifespan, IRST Timezone)
 - Preserve **ADR-005** (URL symbol sync) and **ADR-006** (`1W`/`W` normalization & `{ noData: true }` termination).
 
 ### Verification & Acceptance Criteria
-- [ ] Loading `BTCUSDT` on `1W` returns >100 weekly candles (>500 daily bars fetched via pagination) without freezing.
-- [ ] Loading `15m` and `30m` loads cleanly within the 7-day window and terminates pagination cleanly.
-- [ ] Cache size never exceeds 256 entries under repeated symbol/timeframe switching.
+- [x] Loading `BTCUSDT` on `1W` returns >100 weekly candles (>500 daily bars fetched via pagination) without freezing.
+- [x] Loading `15m` and `30m` loads cleanly within the 7-day window and terminates pagination cleanly.
+- [x] Cache size never exceeds 256 entries under repeated symbol/timeframe switching.
 
 ---
 
