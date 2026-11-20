@@ -33,7 +33,7 @@ Phase 1 (DB WAL, Lifespan, IRST Timezone)
 | **Phase 1** ✅ | Core Infra: SQLite WAL, Lifespan & IRST Timezone | `DB-01`, `BUG-04` (core) | Grouped (foundational infra) | Low (Done) |
 | **Phase 2** ✅ | `NobitexClient` Transport, Rate Limiting & Error Mapping | `API-01`, `API-05` | Grouped (same transport layer) | Medium (Done) |
 | **Phase 3** ✅ | Incremental Sync (`fromId`) & Full Positions Pagination | `API-02`, `API-03` | Grouped (same sync pipeline) | Medium (Done) |
-| **Phase 4** | Surgical Fixes: Open Orders & Calendar Math | `BUG-01`, `BUG-02` | Grouped (small isolated fixes) | Low |
+| **Phase 4** ✅ | Surgical Fixes: Open Orders & Calendar Math | `BUG-01`, `BUG-02` | Grouped (small isolated fixes) | Low (Done) |
 | **Phase 5** | Spot Portfolio WAC Replay, `-RLS` Markets & Margin Wallets | `BUG-03`, `BUG-04` (SQL) | Isolated (financial core) | Medium |
 | **Phase 6** | Chart UDF 500-Bar Pagination, 7-Day Clamp & Cache | `API-04` | Isolated (charting subsystem) | Low |
 | **Phase 7** | Dynamic Market Metadata (`/margin/markets/list`, `/v2/options`) | `OPT-01` | Isolated (metadata layer) | Low |
@@ -159,7 +159,7 @@ Phase 1 (DB WAL, Lifespan, IRST Timezone)
 
 ---
 
-## Phase 4: Surgical Bug Fixes — Open Orders State & Calendar Math
+## Phase 4: Surgical Bug Fixes — Open Orders State & Calendar Math ✅ (Completed)
 **Covers:** `BUG-01`, `BUG-02`  
 **Why grouped:** Four small, self-contained, zero-risk fixes that immediately fix broken UI numbers and ghost open orders.
 
@@ -170,20 +170,20 @@ Phase 1 (DB WAL, Lifespan, IRST Timezone)
 - `src/nob/static/index.html`
 
 ### Tasks
-- [ ] **Fix `BUG-01a` (`db.py`):** Update `get_open_orders()` query to `WHERE status IN ('Active', 'New', 'Inactive')`.
-- [ ] **Fix `BUG-01b` (`db.py` & `server.py`):** Add `reconcile_open_orders(live_orders)` in `db.py`:
+- [x] **Fix `BUG-01a` (`db.py`):** Update `get_open_orders()` query to `WHERE status IN ('Active', 'New', 'Inactive')`.
+- [x] **Fix `BUG-01b` (`db.py` & `server.py`):** Add `reconcile_open_orders(live_orders)` in `db.py`:
   - Upsert all `live_orders`.
   - Any DB order currently in `('Active', 'New', 'Inactive')` whose `id` is NOT in `{o['id'] for o in live_orders}` is updated to `status = 'Closed'` (even when `live_orders == []`).
   - Call `reconcile_open_orders(raw_orders)` inside `api_get_open_orders()` whenever `source == "live"`.
-- [ ] **Fix `BUG-01c` (`index.html:1188`):** Change `formatCurrency(ord.total)` to `formatTradeTotal(ord.total_price, ord.market)` in the Asset Details modal open orders table.
-- [ ] **Fix `BUG-02a` (`pnl.py:601-613`):** Capture `entry_avg_cost = avg_cost` *before* the `if current_qty <= 1e-9: avg_cost = 0.0` reset, and compute `pnl_pct` using `entry_avg_cost`.
-- [ ] **Fix `BUG-02b` (`pnl.py:641`):** Fix futures daily volume from `round(entry_price * collateral, 2)` to `round(collateral * float(pos.get("leverage", 1.0) or 1.0), 2)` for USDT positions.
+- [x] **Fix `BUG-01c` (`index.html:1188`):** Change `formatCurrency(ord.total)` to `formatTradeTotal(ord.total_price, ord.market)` in the Asset Details modal open orders table.
+- [x] **Fix `BUG-02a` (`pnl.py:601-613`):** Capture `entry_avg_cost = avg_cost` *before* the `if current_qty <= 1e-9: avg_cost = 0.0` reset, and compute `pnl_pct` using `entry_avg_cost`.
+- [x] **Fix `BUG-02b` (`pnl.py:641`):** Fix futures daily volume from `round(entry_price * collateral, 2)` to `round(collateral * float(pos.get("leverage", 1.0) or 1.0), 2)` for USDT positions.
 
 ### Verification & Acceptance Criteria
-- [ ] Selling 100% of a spot holding shows the true non-zero `pnl_pct` in `/api/analytics/pnl-calendar` Day Inspector.
-- [ ] Closing a `$100` collateral `5x` BTC margin position adds `$500` (not `$9,000,000`) to `volume_usdt` in the calendar.
-- [ ] Canceling an order externally on Nobitex removes it from SQLite fallback when `/api/orders/open?refresh=true` returns `[]`.
-- [ ] Asset Details modal displays exact order total value instead of `$0.00`.
+- [x] Selling 100% of a spot holding shows the true non-zero `pnl_pct` in `/api/analytics/pnl-calendar` Day Inspector.
+- [x] Closing a `$100` collateral `5x` BTC margin position adds `$500` (not `$9,000,000`) to `volume_usdt` in the calendar.
+- [x] Canceling an order externally on Nobitex removes it from SQLite fallback when `/api/orders/open?refresh=true` returns `[]`.
+- [x] Asset Details modal displays exact order total value instead of `$0.00`.
 
 ---
 

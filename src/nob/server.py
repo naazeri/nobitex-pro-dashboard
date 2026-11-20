@@ -50,6 +50,7 @@ from nob.db import (
     get_chart_state,
     save_chart_state,
     get_open_orders,
+    reconcile_open_orders,
     update_order_status,
     get_max_trade_id,
     get_max_order_id,
@@ -448,12 +449,14 @@ def perform_sync(full: bool = False):
             max_order_id = None if full else get_max_order_id()
             if max_order_id is not None:
                 open_orders = client.fetch_all_orders(status="open", page_size=100, max_pages=5)
+                reconcile_open_orders(open_orders)
                 new_orders = client.fetch_incremental_orders(since_id=max_order_id, status="all", page_size=1000)
-                orders = open_orders + new_orders
+                if new_orders:
+                    upsert_orders(new_orders)
             else:
                 orders = client.fetch_all_orders(status="all", page_size=100, max_pages=50)
-            if orders:
-                upsert_orders(orders)
+                if orders:
+                    upsert_orders(orders)
         except NobitexAuthError as e:
             warnings_list.append(f"Orders auth error ({e.code}): {e.message}")
         except Exception as e:
@@ -908,8 +911,7 @@ def api_get_open_orders(refresh: bool = False):
     source = "live"
     try:
         raw_orders = client.fetch_all_orders(status="open", page_size=100)
-        if raw_orders:
-            upsert_orders(raw_orders)
+        reconcile_open_orders(raw_orders)
     except Exception as e:
         print("Warning: Failed to fetch live open orders from Nobitex API:", e)
         source = "db"

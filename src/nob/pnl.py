@@ -695,7 +695,8 @@ def calculate_daily_pnl_calendar(
                 matched_qty = min(current_qty, amount)
 
                 if matched_qty > 0 and avg_cost > 0:
-                    matched_cost = matched_qty * avg_cost
+                    entry_avg_cost = avg_cost
+                    matched_cost = matched_qty * entry_avg_cost
                     matched_revenue = matched_qty * price
                     prop_fee = fee_usdt * (matched_qty / amount) if amount > 0 else 0.0
                     trade_pnl = matched_revenue - matched_cost - prop_fee
@@ -721,7 +722,7 @@ def calculate_daily_pnl_calendar(
                             "total": total,
                             "fee": fee_raw,
                             "pnl": round(trade_pnl, 2),
-                            "pnl_pct": round(((price - avg_cost) / avg_cost * 100.0), 1) if avg_cost > 0 else 0.0,
+                            "pnl_pct": round(((price - entry_avg_cost) / entry_avg_cost * 100.0), 1) if entry_avg_cost > 0 else 0.0,
                             "timestamp": ts,
                         })
                 else:
@@ -746,7 +747,8 @@ def calculate_daily_pnl_calendar(
 
         entry_price = float(pos.get("entry_price", 0.0) or 0.0)
         collateral = float(pos.get("collateral", 0.0) or 0.0)
-        pos_vol = round(entry_price * collateral, 2) if dst == "USDT" else 0.0
+        leverage = float(pos.get("leverage", 1.0) or 1.0)
+        pos_vol = round(collateral * leverage, 2) if dst == "USDT" else 0.0
 
         daily_stats[date_str]["date"] = date_str
         daily_stats[date_str]["futures_pnl_usdt"] += pnl_usdt

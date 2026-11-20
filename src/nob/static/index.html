@@ -3978,7 +3978,7 @@
                     </td>
                     <td class="py-2 px-3 text-right font-bold text-white"><span class="bidi-num">${{ formatNumber(ord.price) }}</span></td>
                     <td class="py-2 px-3 text-right text-slate-300"><span class="bidi-num">{{ formatAmount(ord.amount) }}</span></td>
-                    <td class="py-2 px-3 text-right font-bold text-slate-200"><span class="bidi-num">${{ formatCurrency(ord.total) }}</span></td>
+                    <td class="py-2 px-3 text-right font-bold text-slate-200"><span class="bidi-num">{{ formatTradeTotal(ord.total_price, ord.market) }}</span></td>
                     <td class="py-2 px-3 text-center">
                       <button @click="openCancelModal(ord)" class="px-2 py-0.5 rounded bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 text-[10px] font-semibold transition cursor-pointer">
                         {{ t('cancelOrder') }}

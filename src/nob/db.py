@@ -278,7 +278,7 @@ def get_open_orders(trade_type: Optional[str] = None, db_path: Optional[Path] = 
     init_db(db_path)
     with get_db_connection(db_path) as conn:
         cursor = conn.cursor()
-        query = "SELECT * FROM orders WHERE status = 'Active'"
+        query = "SELECT * FROM orders WHERE status IN ('Active', 'New', 'Inactive')"
         params = []
         if trade_type:
             query += " AND trade_type = ?"
@@ -286,6 +286,47 @@ def get_open_orders(trade_type: Optional[str] = None, db_path: Optional[Path] = 
         query += " ORDER BY created_at DESC"
         cursor.execute(query, params)
         return [dict(row) for row in cursor.fetchall()]
+
+
+def reconcile_open_orders(live_orders: List[Dict[str, Any]], db_path: Optional[Path] = None) -> int:
+    """
+    Reconcile local SQLite open orders against the live snapshot from Nobitex.
+    Upserts all live open orders and marks any locally Active/New/Inactive orders
+    absent from the live snapshot as 'Closed' (even when live_orders is empty).
+    Returns the number of stale open orders marked as Closed.
+    """
+    init_db(db_path)
+    if live_orders:
+        upsert_orders(live_orders, db_path=db_path)
+
+    live_ids: List[int] = []
+    for o in live_orders:
+        oid = o.get("id")
+        if oid is not None:
+            try:
+                live_ids.append(int(oid))
+            except (ValueError, TypeError):
+                continue
+
+    now_str = now_irst().isoformat()
+    with get_db_connection(db_path) as conn:
+        cursor = conn.cursor()
+        if live_ids:
+            placeholders = ",".join("?" for _ in live_ids)
+            cursor.execute(
+                f"UPDATE orders SET status = 'Closed', updated_at = ? "
+                f"WHERE status IN ('Active', 'New', 'Inactive') AND id NOT IN ({placeholders})",
+                [now_str] + live_ids,
+            )
+        else:
+            cursor.execute(
+                "UPDATE orders SET status = 'Closed', updated_at = ? "
+                "WHERE status IN ('Active', 'New', 'Inactive')",
+                (now_str,),
+            )
+        closed_count = cursor.rowcount
+        conn.commit()
+    return closed_count
 
 
 def update_order_status(order_id: int, status: str, db_path: Optional[Path] = None) -> bool:
