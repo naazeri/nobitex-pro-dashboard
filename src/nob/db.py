@@ -411,6 +411,57 @@ def record_last_sync(db_path: Optional[Path] = None) -> str:
     return now_str
 
 
+def set_metadata_json(key: str, data: Any, db_path: Optional[Path] = None) -> str:
+    """Store a JSON-serializable payload with an IRST updated_at timestamp in metadata table."""
+    init_db(db_path)
+    now_str = now_irst().isoformat()
+    payload = json.dumps({"updated_at": now_str, "data": data}, ensure_ascii=False)
+    with get_db_connection(db_path) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+            (key, payload),
+        )
+        conn.commit()
+    return now_str
+
+
+def get_metadata_cache(
+    key: str,
+    ttl_seconds: float = 43200.0,
+    db_path: Optional[Path] = None,
+) -> Tuple[Optional[Any], bool]:
+    """
+    Retrieve cached JSON metadata as (data, is_stale).
+    Returns (None, True) if missing/corrupt. Always returns cached data even when stale
+    so offline-first callers degrade gracefully.
+    """
+    init_db(db_path)
+    with get_db_connection(db_path) as conn:
+        row = conn.execute("SELECT value FROM metadata WHERE key = ?", (key,)).fetchone()
+    if not row or not row[0]:
+        return None, True
+    try:
+        parsed = json.loads(row[0])
+        if not isinstance(parsed, dict) or "data" not in parsed:
+            return parsed, True
+        data = parsed.get("data")
+        updated_str = parsed.get("updated_at")
+        if not updated_str:
+            return data, True
+        from datetime import datetime
+        dt = datetime.fromisoformat(str(updated_str))
+        age = (now_irst() - dt).total_seconds()
+        return data, age >= ttl_seconds
+    except Exception:
+        return None, True
+
+
+def get_metadata_json(key: str, db_path: Optional[Path] = None) -> Optional[Any]:
+    """Return cached JSON metadata data payload (or None if not cached)."""
+    data, _ = get_metadata_cache(key, db_path=db_path)
+    return data
+
+
 def upsert_trades(
     trades: List[Dict[str, Any]],
     order_type_map: Optional[Dict[int, str]] = None,

@@ -440,10 +440,12 @@ def calculate_positions_summary(
     positions: List[Dict[str, Any]],
     market_stats: Optional[Dict[str, Any]] = None,
     trades: Optional[List[Dict[str, Any]]] = None,
+    margin_markets: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Summarize leveraged positions (معاملات تعهدی) from Nobitex /positions/list.
     Includes comprehensive fee accounting: opening fee, closing fee, and auto-renewal (extension) fee.
+    Uses live cached /margin/markets/list fee rates when falling back to estimation.
     """
     if market_stats is None:
         market_stats = {}
@@ -454,6 +456,14 @@ def calculate_positions_summary(
             trades = get_margin_trades()
         except Exception:
             trades = []
+
+    if margin_markets is None:
+        try:
+            from nob.db import get_metadata_json
+            cached_mm = get_metadata_json("margin_markets_cache")
+            margin_markets = cached_mm if isinstance(cached_mm, dict) else {}
+        except Exception:
+            margin_markets = {}
 
     # Build trade lookup maps for fast matching
     trades_by_ts: Dict[str, Dict[str, Any]] = {}
@@ -486,13 +496,38 @@ def calculate_positions_summary(
 
     for p in positions:
         status = str(p.get("status", "")).strip()
+        src = str(p.get("src_currency", p.get("srcCurrency", ""))).upper()
         dst = str(p.get("dst_currency", p.get("dstCurrency", ""))).lower()
+        side = str(p.get("side", "")).strip().lower()
         pnl = float(p.get("pnl", p.get("PNL", 0.0)) or 0.0)
         collat = float(p.get("collateral", 0.0) or 0.0)
         lev = float(p.get("leverage", 1.0) or 1.0)
         entry_p = float(p.get("entry_price", 0.0) or 0.0)
         exit_p = float(p.get("exit_price", 0.0) or 0.0)
-        rate = 0.00125 if dst == "rls" else 0.0008
+
+        # Resolve live fee rates from cached /margin/markets/list with safe static fallbacks
+        m_cfg = None
+        if margin_markets:
+            m_cfg = margin_markets.get(f"{src}{dst.upper()}")
+            if m_cfg is None and dst in ("rls", "irr"):
+                m_cfg = margin_markets.get(f"{src}IRT")
+        default_rate = 0.00125 if dst == "rls" else 0.0008
+        rate = default_rate
+        ext_rate = 0.00033333
+        if isinstance(m_cfg, dict):
+            fee_key = "buyPositionFeeRate" if side == "buy" else "sellPositionFeeRate"
+            try:
+                live_rate = float(m_cfg.get(fee_key) or 0.0)
+                if live_rate > 0:
+                    rate = live_rate
+            except (ValueError, TypeError):
+                pass
+            try:
+                live_ext = float(m_cfg.get("extensionFeeRate") or m_cfg.get("renewalFeeRate") or 0.0)
+                if live_ext > 0:
+                    ext_rate = live_ext
+            except (ValueError, TypeError):
+                pass
 
         # --- 1. Opening Fee ---
         opened_at = p.get("opened_at")
@@ -542,7 +577,7 @@ def calculate_positions_summary(
                 dur_hours = (t_c - t_o).total_seconds() / 3600.0
                 periods = int(dur_hours // 8)
                 liability = collat * max(0.0, lev - 1.0)
-                ext_fee = periods * 0.00033333 * liability
+                ext_fee = periods * ext_rate * liability
             except Exception:
                 ext_fee = 0.0
 

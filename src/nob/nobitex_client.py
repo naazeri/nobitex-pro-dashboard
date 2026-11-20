@@ -49,6 +49,7 @@ ENDPOINT_RATE_LIMITS: Dict[str, Tuple[int, float, float]] = {
     "/v2/wallets": (14, 60.0, 0.5),                   # Official: 15 / min
     "/market/udf/history": (55, 60.0, 1.05),          # Official: 60 / min
     "/margin/markets/list": (28, 60.0, 2.05),         # Official: 30 / min
+    "/v2/options": (28, 60.0, 1.0),                   # Public system options
 }
 
 _NUMERIC_SEGMENT_RE = re.compile(r"/\d+(?=/|$)")
@@ -767,6 +768,23 @@ class NobitexClient:
             "c": [bars_by_ts[ts][3] for ts in sorted_ts],
             "v": [bars_by_ts[ts][4] for ts in sorted_ts],
         }
+
+    def fetch_margin_markets(self, authenticated: bool = True) -> Dict[str, Any]:
+        """
+        Fetch margin market configurations (maxLeverage, fee rates, pool availability)
+        from GET /margin/markets/list. Falls back to public call if keys are absent.
+        """
+        use_auth = bool(authenticated and self.api_key and self.secret)
+        data = self._request("GET", "/margin/markets/list", auth=use_auth, timeout=15.0)
+        markets = data.get("markets")
+        return markets if isinstance(markets, dict) else {}
+
+    def fetch_system_options(self) -> Dict[str, Any]:
+        """
+        Fetch Nobitex system options (precisions, min order amounts, features)
+        from public GET /v2/options.
+        """
+        return self._request("GET", "/v2/options", auth=False, timeout=15.0)
 
     def cancel_order(self, order_id: int) -> Dict[str, Any]:
         """

@@ -56,6 +56,9 @@ from nob.db import (
     get_known_closed_position_ids,
     get_active_position_ids,
     record_last_sync,
+    set_metadata_json,
+    get_metadata_cache,
+    get_metadata_json,
 )
 from nob.nobitex_client import (
     NobitexClient,
@@ -119,11 +122,18 @@ def api_get_stats():
 
 @app.get("/api/markets")
 def api_get_markets():
-    """Return distinct active markets and detailed pricing/leverage for calculator."""
+    """Return distinct active markets with live cached leverage & precision metadata."""
     markets = get_distinct_markets()
     prices = get_market_prices()
-    
-    leverage_map = {
+    margin_markets = get_metadata_json("margin_markets_cache") or {}
+    sys_options = get_metadata_json("system_options_cache") or {}
+    nob_opts = sys_options.get("nobitex") if isinstance(sys_options.get("nobitex"), dict) else sys_options
+    price_precisions = nob_opts.get("pricePrecisions") if isinstance(nob_opts, dict) else {}
+    amount_precisions = nob_opts.get("amountPrecisions") if isinstance(nob_opts, dict) else {}
+    price_precisions = price_precisions if isinstance(price_precisions, dict) else {}
+    amount_precisions = amount_precisions if isinstance(amount_precisions, dict) else {}
+
+    fallback_leverage_map = {
         "BTC": 10,
         "ETH": 10,
         "USDT": 10,
@@ -142,7 +152,7 @@ def api_get_markets():
         "UNI": 5,
         "AAVE": 5,
     }
-    
+
     details = {}
     for m in markets:
         parts = m.split("-")
@@ -151,16 +161,44 @@ def api_get_markets():
         m_clean = m.lower().replace("-", "")
         price_info = prices.get(m_clean) or prices.get(m.lower())
         latest_price = float(price_info.get("latest", 0.0)) if price_info else 0.0
-        max_lev = leverage_map.get(src, 5)
-        
+
+        # Lookup live maxLeverage & precisions (Nobitex keys Rial markets as *IRT)
+        candidate_keys = [f"{src}{dst}"]
+        if dst in ("RLS", "IRR"):
+            candidate_keys.append(f"{src}IRT")
+
+        live_lev = None
+        for k in candidate_keys:
+            m_cfg = margin_markets.get(k) if isinstance(margin_markets, dict) else None
+            if isinstance(m_cfg, dict) and m_cfg.get("maxLeverage") is not None:
+                try:
+                    val = float(m_cfg["maxLeverage"])
+                    if val > 0:
+                        live_lev = int(val) if val.is_integer() else val
+                        break
+                except (ValueError, TypeError):
+                    pass
+
+        max_lev = live_lev if live_lev is not None else fallback_leverage_map.get(src, 5)
+
+        p_prec = None
+        a_prec = None
+        for k in candidate_keys:
+            if p_prec is None and k in price_precisions:
+                p_prec = price_precisions[k]
+            if a_prec is None and k in amount_precisions:
+                a_prec = amount_precisions[k]
+
         details[m] = {
             "market": m,
             "src_currency": src,
             "dst_currency": dst,
             "latest": latest_price,
             "max_leverage": max_lev,
+            "price_precision": p_prec,
+            "amount_precision": a_prec,
         }
-        
+
     return {
         "markets": markets,
         "details": details,
@@ -515,6 +553,28 @@ def perform_sync(full: bool = False):
             trades = client.fetch_all_trades(page_size=500)
         # Pass order_type_map=None so upsert_trades uses the complete orders table in SQLite
         saved_count = upsert_trades(trades, order_type_map=None)
+
+        # 6. Refresh cached market metadata (12h TTL) for live leverage, fees & precisions
+        try:
+            _, mm_stale = get_metadata_cache("margin_markets_cache", ttl_seconds=43200.0)
+            if full or mm_stale:
+                mm_data = client.fetch_margin_markets(authenticated=True)
+                if mm_data:
+                    set_metadata_json("margin_markets_cache", mm_data)
+        except Exception as mm_err:
+            print("Notice: Margin markets metadata refresh failed:", mm_err)
+            warnings_list.append(f"Margin markets metadata skipped: {mm_err}")
+
+        try:
+            _, opt_stale = get_metadata_cache("system_options_cache", ttl_seconds=43200.0)
+            if full or opt_stale:
+                opt_data = client.fetch_system_options()
+                if opt_data:
+                    set_metadata_json("system_options_cache", opt_data)
+        except Exception as opt_err:
+            print("Notice: System options metadata refresh failed:", opt_err)
+            warnings_list.append(f"System options metadata skipped: {opt_err}")
+
         record_last_sync()
 
         sync_status["warnings"] = warnings_list

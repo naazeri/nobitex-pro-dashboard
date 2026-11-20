@@ -36,7 +36,7 @@ Phase 1 (DB WAL, Lifespan, IRST Timezone)
 | **Phase 4** ✅ | Surgical Fixes: Open Orders & Calendar Math | `BUG-01`, `BUG-02` | Grouped (small isolated fixes) | Low (Done) |
 | **Phase 5** ✅ | Spot Portfolio WAC Replay, `-RLS` Markets & Margin Wallets | `BUG-03`, `BUG-04` (SQL) | Isolated (financial core) | Medium (Done) |
 | **Phase 6** ✅ | Chart UDF 500-Bar Pagination, 7-Day Clamp & Cache | `API-04` | Isolated (charting subsystem) | Low (Done) |
-| **Phase 7** | Dynamic Market Metadata (`/margin/markets/list`, `/v2/options`) | `OPT-01` | Isolated (metadata layer) | Low |
+| **Phase 7** ✅ | Dynamic Market Metadata (`/margin/markets/list`, `/v2/options`) | `OPT-01` | Isolated (metadata layer) | Low (Done) |
 | **Phase 8** | Monetary Precision Migration (`float` → `Decimal`) | `OPT-02` | Isolated (regression-sensitive) | Medium |
 | **Phase 9** | Real-Time WebSocket Bridge (Backend Centrifugo → Local WS) | `OPT-03` | Isolated (new subsystem) | High |
 | **Phase 10** | True Equity Curve & Cashflow Reconciliation | `OPT-04` | Isolated (new tables + TWR math) | Medium |
@@ -247,7 +247,7 @@ Phase 1 (DB WAL, Lifespan, IRST Timezone)
 
 ---
 
-## Phase 7: Dynamic Market Metadata (`/margin/markets/list` & `/v2/options`)
+## Phase 7: Dynamic Market Metadata (`/margin/markets/list` & `/v2/options`) ✅ (Completed)
 **Covers:** `OPT-01`  
 **Why isolated:** Replaces static hardcoded maps with live, cached Nobitex exchange configuration.
 
@@ -258,16 +258,16 @@ Phase 1 (DB WAL, Lifespan, IRST Timezone)
 - `src/nob/pnl.py`
 
 ### Tasks
-- [ ] In `NobitexClient`, add:
+- [x] In `NobitexClient`, add:
   - `fetch_margin_markets(authenticated: bool = True)` → `GET /margin/markets/list`
   - `fetch_system_options()` → `GET /v2/options`
-- [ ] In `db.py`, store cached JSON blobs (`margin_markets_cache`, `system_options_cache` with `updated_at` in `metadata` table, 12h TTL) and refresh during `perform_sync()`.
-- [ ] In `server.py:api_get_markets`: replace hardcoded `leverage_map` with live `maxLeverage` from `margin_markets_cache` (falling back to existing defaults if offline/unpopulated) and include `price_precision` / `amount_precision` from `system_options_cache`.
-- [ ] In `pnl.py:calculate_positions_summary`: use live `buyPositionFeeRate` / `sellPositionFeeRate` and renewal rate from `margin_markets_cache` when trade-level fee matching falls back to estimation, keeping `0.0008` / `0.00125` as safe fallbacks when fields are null/absent.
+- [x] In `db.py`, store cached JSON blobs (`margin_markets_cache`, `system_options_cache` with `updated_at` in `metadata` table, 12h TTL) and refresh during `perform_sync()`.
+- [x] In `server.py:api_get_markets`: replace hardcoded `leverage_map` with live `maxLeverage` from `margin_markets_cache` (falling back to existing defaults if offline/unpopulated) and include `price_precision` / `amount_precision` from `system_options_cache`.
+- [x] In `pnl.py:calculate_positions_summary`: use live `buyPositionFeeRate` / `sellPositionFeeRate` and renewal rate from `margin_markets_cache` when trade-level fee matching falls back to estimation, keeping `0.0008` / `0.00125` as safe fallbacks when fields are null/absent.
 
 ### Verification & Acceptance Criteria
-- [ ] `/api/markets` returns live `max_leverage` matching Nobitex's `/margin/markets/list` response.
-- [ ] App still works 100% offline when cache is empty (graceful fallback).
+- [x] `/api/markets` returns live `max_leverage` matching Nobitex's `/margin/markets/list` response.
+- [x] App still works 100% offline when cache is empty (graceful fallback).
 
 ---
 
