@@ -45,7 +45,8 @@ Designed from the ground up to be **100% offline-ready and private**: your tradi
 - **Day Inspector:** Click any calendar day to inspect every spot execution and closed futures position settled on that date.
 
 ### 4. 📈 Equity Curve & Cumulative PnL
-- **Continuous Historical Timeline:** Visualizes total account portfolio growth and cumulative net returns over time.
+- **Pure Spot Isolation:** Strictly isolates Spot trading performance and holdings; excludes leveraged futures multipliers and fiat bank transfers to guarantee zero distortion.
+- **Continuous Historical Timeline:** Visualizes total account portfolio growth and cumulative net returns over time from your first spot execution.
 - **Bitcoin Benchmark (Alpha Comparison):** Overlay Bitcoin's return trajectory on the same chart to compare your performance against the market benchmark.
 - **Risk Metrics:** Automatically calculates Maximum Drawdown (MDD), Peak Account Equity, and Alpha vs BTC.
 - **Dynamic Date Filtering:** Presets for `All Time`, `30D`, `90D`, `YTD`, and `Custom` date ranges, fully persistent across page refreshes via URL parameters.
