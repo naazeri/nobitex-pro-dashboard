@@ -4209,23 +4209,78 @@
 
   <!-- Main Vue 3 Application -->
   <script type="module">
-    import { createApp, ref, reactive, computed, onMounted, nextTick, watch } from '/static/vendor/vue.esm-browser.prod.js';
-    import { TRANSLATIONS, formatDate } from '/static/i18n.js?v=2.1.3';
+    import { createApp, ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from '/static/vendor/vue.esm-browser.prod.js';
+    import { TRANSLATIONS, formatDate } from '/static/i18n.js?v=2.2.0';
+    import { fetchJson, createLatestRequestGuard } from '/static/js/api.js?v=2.2.0';
+    import {
+      getTehranNow,
+      getTehranTimeStr,
+      formatDateIsoTehran,
+      getTehranDateOffsetIso,
+      getTehranYearStartIso,
+      isValidIsoDate,
+      isValidSymbol,
+      getResolutionForTimeframe,
+      normalizeWsResolution,
+      formatCurrency,
+      formatSignedCurrency,
+      formatSignedPercent,
+      formatNumber,
+      formatAmount,
+      formatNetAmount,
+      formatMarket,
+      formatToman,
+      formatPositionPrice as formatPositionPriceUtil,
+      formatPositionPnl as formatPositionPnlUtil,
+      formatPositionCollateral as formatPositionCollateralUtil,
+      formatPositionFee as formatPositionFeeUtil,
+      formatTradePrice as formatTradePriceUtil,
+      formatTradeTotal as formatTradeTotalUtil,
+      formatTradeFee as formatTradeFeeUtil,
+      resolveAssetIcon,
+      resolveMarketBaseIcon,
+      handleImgError,
+    } from '/static/js/utils.js?v=2.2.0';
+    import {
+      J_MONTHS,
+      WEEK_DAYS_FA,
+      formatEquityAxisLabel,
+      formatSelectedDayTitle,
+    } from '/static/js/calendar.js?v=2.2.0';
+    import {
+      computeDefaultSlTp,
+      playRiskAlertSound,
+      closeRiskAudioContext,
+    } from '/static/js/calculator.js?v=2.2.0';
+    import { createLocalWsClient } from '/static/js/ws.js?v=2.2.0';
 
     createApp({
       setup() {
         const urlParams = new URLSearchParams(window.location.search);
         const initialTab = urlParams.get('tab');
-        const initialSym = urlParams.get('symbol') || urlParams.get('sym');
-        const initialFrom = urlParams.get('from');
-        const initialTo = urlParams.get('to');
+        const rawInitialSym = urlParams.get('symbol') || urlParams.get('sym');
+        const initialSym = isValidSymbol(rawInitialSym) ? rawInitialSym.trim().toUpperCase() : null;
+        const rawInitialFrom = urlParams.get('from');
+        const rawInitialTo = urlParams.get('to');
+        const initialFrom = isValidIsoDate(rawInitialFrom) ? rawInitialFrom : '';
+        const initialTo = isValidIsoDate(rawInitialTo) ? rawInitialTo : '';
 
         const currentLang = ref(localStorage.getItem('nob_lang') || 'en');
         const activeTab = ref(['spot', 'margin', 'orders', 'chart', 'calendar', 'trades'].includes(initialTab) ? initialTab : 'spot');
         const spotDatePreset = ref((initialFrom || initialTo) ? 'custom' : 'all');
-        const spotDateFrom = ref(initialFrom || '');
-        const spotDateTo = ref(initialTo || '');
-        const spotPeriod = ref(initialFrom || 'all'); // backward compatibility alias
+        const spotDateFrom = ref(initialFrom);
+        const spotDateTo = ref(initialTo);
+
+        // Request race guards for concurrent / rapid filter switches
+        const portfolioReqGuard = createLatestRequestGuard();
+        const tradesReqGuard = createLatestRequestGuard();
+        const equityReqGuard = createLatestRequestGuard();
+        const assetTradesReqGuard = createLatestRequestGuard();
+
+        // Lazy-load & chart-render tracking flags
+        let calendarLoadedOnce = false;
+        let ordersLoadedOnce = false;
+        let lastChartsRenderKey = '';
 
         function applyLanguageSettings(lang) {
           const dir = TRANSLATIONS[lang]?.dir || 'ltr';
@@ -4238,7 +4293,9 @@
         function toggleLanguage() {
           currentLang.value = currentLang.value === 'en' ? 'fa' : 'en';
           applyLanguageSettings(currentLang.value);
+          lastChartsRenderKey = '';
           renderCharts();
+          renderEquityChart();
         }
 
         function t(key, params = {}) {
@@ -4251,104 +4308,84 @@
           return text;
         }
 
-        function formatUserLevel(lvl) {
-          if (lvl === null || lvl === undefined || lvl === '') return '';
-          const s = String(lvl).trim().toLowerCase();
-          if (s === 'verified' || s === '90') {
-            return currentLang.value === 'fa' ? 'سطح تاییدشده' : 'Verified Level';
+        function syncTvSymbol(sym) {
+          if (sym && tvWidgetInstance && isTvChartReady && tvWidgetInstance.activeChart) {
+            try {
+              if (tvWidgetInstance.activeChart().symbol() !== sym) {
+                tvWidgetInstance.activeChart().setSymbol(sym);
+              }
+            } catch (e) {
+              console.warn('TradingView setSymbol sync warning:', e);
+            }
           }
-          if (s === 'basic' || s === 'unverified' || s === '10' || s === '1') {
-            return currentLang.value === 'fa' ? 'سطح ۱ (پایه)' : 'Level 1 (Basic)';
+        }
+
+        function syncTvResolution(tf) {
+          if (tf && tvWidgetInstance && isTvChartReady && tvWidgetInstance.activeChart) {
+            const res = getResolutionForTimeframe(tf);
+            try {
+              if (tvWidgetInstance.activeChart().resolution() !== res) {
+                tvWidgetInstance.activeChart().setResolution(res);
+              }
+            } catch (e) {
+              console.warn('TradingView setResolution sync warning:', e);
+            }
           }
-          if (s === '2' || s === '20') {
-            return currentLang.value === 'fa' ? 'سطح ۲' : 'Level 2';
-          }
-          if (s === 'trader' || s === '3' || s === '30') {
-            return currentLang.value === 'fa' ? 'سطح ۳ (حرفه‌ای)' : 'Level 3 (Trader)';
-          }
-          return t('userLevelBadge', { level: lvl });
         }
 
         function switchTab(tab) {
           activeTab.value = tab;
           if (tab === 'spot') {
-            nextTick(() => renderCharts());
+            nextTick(() => {
+              const renderKey = `${currentLang.value}:${summary.value?.total_portfolio_value}:${holdings.value.length}`;
+              if (!chartAllocationInstance || lastChartsRenderKey !== renderKey) {
+                renderCharts();
+              }
+              if (!chartEquityInstance && equityData.value) {
+                renderEquityChart();
+              }
+            });
           } else if (tab === 'calendar') {
-            fetchCalendarData();
+            if (!calendarLoadedOnce) {
+              fetchCalendarData();
+            }
           } else if (tab === 'chart') {
             nextTick(() => {
               initTradingViewChart();
-              if (tvWidgetInstance && isTvChartReady && tvWidgetInstance.activeChart) {
-                try {
-                  if (tvWidgetInstance.activeChart().symbol() !== chartSymbol.value) {
-                    tvWidgetInstance.activeChart().setSymbol(chartSymbol.value);
-                  }
-                } catch (e) {}
-              }
             });
           } else if (tab === 'orders') {
-            fetchOpenOrders();
+            if (!ordersLoadedOnce) {
+              fetchOpenOrders();
+            }
           }
-        }
-
-        function formatDateIso(d) {
-          const year = d.getFullYear();
-          const month = String(d.getMonth() + 1).padStart(2, '0');
-          const day = String(d.getDate()).padStart(2, '0');
-          return `${year}-${month}-${day}`;
         }
 
         function setSpotDatePreset(preset) {
           spotDatePreset.value = preset;
-          const today = new Date();
+          const todayIso = formatDateIsoTehran();
           if (preset === 'all') {
             spotDateFrom.value = '';
             spotDateTo.value = '';
-            spotPeriod.value = 'all';
           } else if (preset === '30d') {
-            const d = new Date();
-            d.setDate(d.getDate() - 30);
-            spotDateFrom.value = formatDateIso(d);
-            spotDateTo.value = formatDateIso(today);
-            spotPeriod.value = spotDateFrom.value;
+            spotDateFrom.value = getTehranDateOffsetIso(-30);
+            spotDateTo.value = todayIso;
           } else if (preset === '90d') {
-            const d = new Date();
-            d.setDate(d.getDate() - 90);
-            spotDateFrom.value = formatDateIso(d);
-            spotDateTo.value = formatDateIso(today);
-            spotPeriod.value = spotDateFrom.value;
+            spotDateFrom.value = getTehranDateOffsetIso(-90);
+            spotDateTo.value = todayIso;
           } else if (preset === 'ytd') {
-            const d = new Date(today.getFullYear(), 0, 1);
-            spotDateFrom.value = formatDateIso(d);
-            spotDateTo.value = formatDateIso(today);
-            spotPeriod.value = spotDateFrom.value;
+            spotDateFrom.value = getTehranYearStartIso();
+            spotDateTo.value = todayIso;
           } else if (preset === 'custom') {
-            if (!spotDateTo.value) spotDateTo.value = formatDateIso(today);
-            spotPeriod.value = spotDateFrom.value || 'all';
+            if (!spotDateTo.value) spotDateTo.value = todayIso;
           }
           pushUrlState();
           fetchPortfolio();
-          fetchEquityCurve();
         }
 
         function onDateRangeChange() {
           spotDatePreset.value = 'custom';
-          spotPeriod.value = spotDateFrom.value || 'all';
           pushUrlState();
           fetchPortfolio();
-          fetchEquityCurve();
-        }
-
-        function changeSpotPeriod(period) {
-          if (period === 'all') {
-            setSpotDatePreset('all');
-          } else {
-            spotDateFrom.value = period;
-            spotDatePreset.value = 'custom';
-            spotPeriod.value = period;
-            pushUrlState();
-            fetchPortfolio();
-          }
         }
 
         // Open Orders states
@@ -4401,13 +4438,11 @@
           openOrdersLoading.value = true;
           try {
             const url = refresh ? '/api/orders/open?refresh=true' : '/api/orders/open';
-            const resp = await fetch(url);
-            if (resp.ok) {
-              const data = await resp.json();
-              openOrders.value = data.orders || [];
-              if (data.summary) {
-                openOrdersSummary.value = data.summary;
-              }
+            const data = await fetchJson(url);
+            ordersLoadedOnce = true;
+            openOrders.value = data.orders || [];
+            if (data.summary) {
+              openOrdersSummary.value = data.summary;
             }
           } catch (e) {
             console.error('Error fetching open orders:', e);
@@ -4434,17 +4469,16 @@
           cancelLoading.value = true;
           cancelErrorMsg.value = '';
           try {
-            const resp = await fetch('/api/orders/cancel', {
+            const data = await fetchJson('/api/orders/cancel', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ order_id: orderToCancel.value.id }),
             });
-            const data = await resp.json();
-            if (resp.ok && data.status === 'ok') {
+            if (data && data.status === 'ok') {
               closeCancelModal();
               await fetchOpenOrders(true);
             } else {
-              cancelErrorMsg.value = data.detail || data.message || t('orderCancelError');
+              cancelErrorMsg.value = data?.detail || data?.message || t('orderCancelError');
             }
           } catch (e) {
             cancelErrorMsg.value = e.message || t('orderCancelError');
@@ -4453,8 +4487,7 @@
           }
         }
 
-        // Phase 11: User Profile Tier & Advanced Margin / Bulk Cancel Actions
-        const userProfile = ref(null);
+        // Phase 11: Advanced Margin & Bulk Cancel Actions
         const isCollateralModalOpen = ref(false);
         const isClosePosModalOpen = ref(false);
         const isBulkCancelModalOpen = ref(false);
@@ -4464,15 +4497,6 @@
         const bulkCancelForm = reactive({ hours: '', trade_type: '' });
         const tradeActionLoading = ref(false);
         const tradeActionError = ref('');
-
-        async function fetchUserProfile() {
-          try {
-            const resp = await fetch('/api/user/profile');
-            if (resp.ok) {
-              userProfile.value = await resp.json();
-            }
-          } catch (e) {}
-        }
 
         function openCollateralModal(pos) {
           positionForAction.value = pos;
@@ -4490,22 +4514,23 @@
           tradeActionLoading.value = true;
           tradeActionError.value = '';
           try {
-            const resp = await fetch(`/api/positions/${positionForAction.value.id}/edit-collateral`, {
+            const data = await fetchJson(`/api/positions/${positionForAction.value.id}/edit-collateral`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ collateral: Number(collateralForm.collateral) }),
             });
-            const data = await resp.json();
-            if (resp.ok && data.status === 'ok') {
+            if (data && data.status === 'ok') {
               closeCollateralModal();
               await fetchPositions();
-            } else if (resp.status === 403 || data.code === 'TradePermissionRequired') {
-              tradeActionError.value = t('tradePermissionRequired');
             } else {
-              tradeActionError.value = data.detail || data.message || 'Error updating collateral';
+              tradeActionError.value = data?.detail || data?.message || 'Error updating collateral';
             }
           } catch (e) {
-            tradeActionError.value = e.message || 'Network error';
+            if (e.status === 403 || e.payload?.code === 'TradePermissionRequired') {
+              tradeActionError.value = t('tradePermissionRequired');
+            } else {
+              tradeActionError.value = e.message || 'Network error';
+            }
           } finally {
             tradeActionLoading.value = false;
           }
@@ -4544,23 +4569,24 @@
             if (closePosForm.execution === 'stop_limit' || closePosForm.execution === 'stop_market') {
               payload.stop_price = Number(closePosForm.stop_price);
             }
-            const resp = await fetch(`/api/positions/${positionForAction.value.id}/close`, {
+            const data = await fetchJson(`/api/positions/${positionForAction.value.id}/close`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(payload),
             });
-            const data = await resp.json();
-            if (resp.ok && data.status === 'ok') {
+            if (data && data.status === 'ok') {
               closeClosePosModal();
               await fetchPositions();
               await fetchOpenOrders(true);
-            } else if (resp.status === 403 || data.code === 'TradePermissionRequired') {
-              tradeActionError.value = t('tradePermissionRequired');
             } else {
-              tradeActionError.value = data.detail || data.message || 'Error closing position';
+              tradeActionError.value = data?.detail || data?.message || 'Error closing position';
             }
           } catch (e) {
-            tradeActionError.value = e.message || 'Network error';
+            if (e.status === 403 || e.payload?.code === 'TradePermissionRequired') {
+              tradeActionError.value = t('tradePermissionRequired');
+            } else {
+              tradeActionError.value = e.message || 'Network error';
+            }
           } finally {
             tradeActionLoading.value = false;
           }
@@ -4586,22 +4612,26 @@
             if (bulkCancelForm.hours !== '' && bulkCancelForm.hours !== null && Number(bulkCancelForm.hours) >= 0) {
               payload.hours = Number(bulkCancelForm.hours);
             }
-            const resp = await fetch('/api/orders/cancel-old', {
+            if (!payload.trade_type && payload.hours === undefined) {
+              payload.confirm_all = true;
+            }
+            const data = await fetchJson('/api/orders/cancel-old', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(payload),
             });
-            const data = await resp.json();
-            if (resp.ok && data.status === 'ok') {
+            if (data && data.status === 'ok') {
               closeBulkCancelModal();
               await fetchOpenOrders(true);
-            } else if (resp.status === 403 || data.code === 'TradePermissionRequired') {
-              tradeActionError.value = t('tradePermissionRequired');
             } else {
-              tradeActionError.value = data.detail || data.message || 'Error canceling orders';
+              tradeActionError.value = data?.detail || data?.message || 'Error canceling orders';
             }
           } catch (e) {
-            tradeActionError.value = e.message || 'Network error';
+            if (e.status === 403 || e.payload?.code === 'TradePermissionRequired') {
+              tradeActionError.value = t('tradePermissionRequired');
+            } else {
+              tradeActionError.value = e.message || 'Network error';
+            }
           } finally {
             tradeActionLoading.value = false;
           }
@@ -4917,8 +4947,7 @@
 
         async function fetchStats() {
           try {
-            const res = await fetch('/api/stats');
-            stats.value = await res.json();
+            stats.value = await fetchJson('/api/stats');
           } catch (e) {
             console.error('Error fetching stats:', e);
           }
@@ -4926,8 +4955,7 @@
 
         async function fetchMarkets() {
           try {
-            const res = await fetch('/api/markets');
-            const data = await res.json();
+            const data = await fetchJson('/api/markets');
             markets.value = data.markets || [];
             marketDetails.value = data.details || {};
           } catch (e) {
@@ -4936,16 +4964,18 @@
         }
 
         async function fetchPortfolio() {
+          const { id: reqId, signal } = portfolioReqGuard.begin();
           try {
             const params = new URLSearchParams();
             if (spotDateFrom.value) params.set('from_date', spotDateFrom.value);
             if (spotDateTo.value) params.set('to_date', spotDateTo.value);
             const queryStr = params.toString() ? `?${params.toString()}` : '';
-            const res = await fetch(`/api/portfolio${queryStr}`);
-            const data = await res.json();
+            const data = await fetchJson(`/api/portfolio${queryStr}`, { signal });
+            if (!portfolioReqGuard.isLatest(reqId)) return;
             summary.value = data.summary || summary.value;
             holdings.value = data.holdings || [];
             chartsData.value = data.charts || {};
+            lastChartsRenderKey = '';
             await nextTick();
             renderCharts();
             fetchEquityCurve();
@@ -4959,14 +4989,15 @@
               }
             }
           } catch (e) {
-            console.error('Error fetching portfolio:', e);
+            if (e.name !== 'AbortError') {
+              console.error('Error fetching portfolio:', e);
+            }
           }
         }
 
         async function fetchPositions() {
           try {
-            const res = await fetch('/api/positions');
-            const data = await res.json();
+            const data = await fetchJson('/api/positions');
             activePositions.value = data.active || [];
             pastPositions.value = data.past || [];
             positionsSummary.value = data.summary || positionsSummary.value;
@@ -4990,28 +5021,8 @@
           }
         }
 
-        function playRiskAlertSound() {
-          try {
-            const AudioCtx = window.AudioContext || window.webkitAudioContext;
-            if (!AudioCtx) return;
-            const audioCtx = new AudioCtx();
-            const osc = audioCtx.createOscillator();
-            const gain = audioCtx.createGain();
-            osc.type = 'sine';
-            osc.frequency.setValueAtTime(587.33, audioCtx.currentTime); // D5
-            osc.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.15); // A5
-            gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
-            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.35);
-            osc.connect(gain);
-            gain.connect(audioCtx.destination);
-            osc.start();
-            osc.stop(audioCtx.currentTime + 0.35);
-          } catch (e) {
-            console.warn('Audio alert notice:', e);
-          }
-        }
-
         async function fetchTrades() {
+          const { id: reqId, signal } = tradesReqGuard.begin();
           loading.value = true;
           try {
             const sortParam = tradeSorts.value.length > 0 
@@ -5032,20 +5043,25 @@
               params.append('tag', filters.tag);
             }
 
-            const res = await fetch(`/api/trades?${params.toString()}`);
-            const data = await res.json();
+            const data = await fetchJson(`/api/trades?${params.toString()}`, { signal });
+            if (!tradesReqGuard.isLatest(reqId)) return;
             trades.value = data.trades || [];
             totalRecords.value = data.total || 0;
             totalPages.value = data.total_pages || 1;
           } catch (e) {
-            console.error('Error fetching trades:', e);
+            if (e.name !== 'AbortError') {
+              console.error('Error fetching trades:', e);
+            }
           } finally {
-            loading.value = false;
+            if (tradesReqGuard.isLatest(reqId)) {
+              loading.value = false;
+            }
           }
         }
 
         function renderCharts() {
           if (!window.Chart || activeTab.value !== 'spot') return;
+          lastChartsRenderKey = `${currentLang.value}:${summary.value?.total_portfolio_value}:${holdings.value.length}`;
 
           // 1. Asset Allocation Donut Chart
           const allocCtx = document.getElementById('chartAllocationCanvas');
@@ -5125,22 +5141,27 @@
         const equityMetrics = computed(() => equityData.value?.metrics || null);
 
         async function fetchEquityCurve() {
+          const { id: reqId, signal } = equityReqGuard.begin();
           isEquityLoading.value = true;
           try {
             const tf = equityTimeframe.value;
             const params = new URLSearchParams({ timeframe: tf });
             if (spotDateFrom.value) params.set('from_date', spotDateFrom.value);
             if (spotDateTo.value) params.set('to_date', spotDateTo.value);
-            const res = await fetch(`/api/analytics/equity-curve?${params.toString()}`);
-            const data = await res.json();
+            const data = await fetchJson(`/api/analytics/equity-curve?${params.toString()}`, { signal });
+            if (!equityReqGuard.isLatest(reqId)) return;
             equityData.value = data;
             nextTick(() => {
               renderEquityChart();
             });
           } catch (e) {
-            console.error('Failed to fetch equity curve:', e);
+            if (e.name !== 'AbortError') {
+              console.error('Failed to fetch equity curve:', e);
+            }
           } finally {
-            isEquityLoading.value = false;
+            if (equityReqGuard.isLatest(reqId)) {
+              isEquityLoading.value = false;
+            }
           }
         }
 
@@ -5170,22 +5191,7 @@
 
           const timeline = equityData.value.timeline;
           const isFa = currentLang.value === 'fa' && window.jalaali;
-          const jMonths = ['فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور', 'مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند'];
-
-          const labels = timeline.map(item => {
-            const parts = item.date.split('-').map(Number);
-            if (parts.length === 3) {
-              const [gy, gm, gd] = parts;
-              if (isFa) {
-                const j = window.jalaali.toJalaali(gy, gm, gd);
-                return `${j.jd} ${jMonths[j.jm - 1]}`;
-              } else {
-                const dt = new Date(gy, gm - 1, gd);
-                return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-              }
-            }
-            return item.date;
-          });
+          const labels = timeline.map(item => formatEquityAxisLabel(item.date, isFa, window.jalaali));
 
           const ctx = canvas.getContext('2d');
           const height = canvas.height || 300;
@@ -5331,9 +5337,8 @@
                       if (parts.length === 3 && isFa) {
                         const [gy, gm, gd] = parts;
                         const j = window.jalaali.toJalaali(gy, gm, gd);
-                        const weekDaysFa = ['یکشنبه', 'دوشنبه', 'سه‌شنبه', 'چهارشنبه', 'پنج‌شنبه', 'جمعه', 'شنبه'];
-                        const dObj = new Date(gy, gm - 1, gd);
-                        return `${weekDaysFa[dObj.getDay()]}، ${j.jd} ${jMonths[j.jm - 1]} ${j.jy} (${item.date})`;
+                        const dObj = new Date(Date.UTC(gy, gm - 1, gd));
+                        return `${WEEK_DAYS_FA[dObj.getUTCDay()]}، ${j.jd} ${J_MONTHS[j.jm - 1]} ${j.jy} (${item.date})`;
                       }
                       return item.date;
                     },
@@ -5379,31 +5384,52 @@
           }
         }
 
+        let syncPollTimer = null;
+        let fallbackPollTimer = null;
+
         async function triggerSync() {
           if (isSyncing.value) return;
           isSyncing.value = true;
           syncStatusMsg.value = t('syncingBtn');
 
           try {
-            await fetch('/api/sync', { method: 'POST' });
-            
-            const interval = setInterval(async () => {
-              const statusRes = await fetch('/api/sync/status');
-              const statusData = await statusRes.json();
-              if (statusData.step) {
-                syncStatusMsg.value = statusData.step;
-              }
-              if (!statusData.is_syncing) {
-                clearInterval(interval);
-                isSyncing.value = false;
-                syncStatusMsg.value = '';
-                fetchStats();
-                fetchPortfolio();
-                fetchPositions();
-                fetchMarkets();
-                fetchTrades();
-                fetchCalendarData();
-                fetchOpenOrders(true);
+            await fetchJson('/api/sync', { method: 'POST' });
+
+            let consecutiveErrors = 0;
+            if (syncPollTimer) clearInterval(syncPollTimer);
+            syncPollTimer = setInterval(async () => {
+              try {
+                const statusData = await fetchJson('/api/sync/status');
+                consecutiveErrors = 0;
+                if (statusData.step) {
+                  syncStatusMsg.value = statusData.step;
+                }
+                if (!statusData.is_syncing) {
+                  clearInterval(syncPollTimer);
+                  syncPollTimer = null;
+                  isSyncing.value = false;
+                  syncStatusMsg.value = '';
+                  fetchStats();
+                  fetchPortfolio();
+                  fetchPositions();
+                  fetchMarkets();
+                  fetchTrades();
+                  if (calendarLoadedOnce || activeTab.value === 'calendar') {
+                    fetchCalendarData();
+                  }
+                  if (ordersLoadedOnce || activeTab.value === 'orders') {
+                    fetchOpenOrders(true);
+                  }
+                }
+              } catch (pollErr) {
+                consecutiveErrors += 1;
+                console.warn('Sync status poll error:', pollErr);
+                if (consecutiveErrors >= 3) {
+                  clearInterval(syncPollTimer);
+                  syncPollTimer = null;
+                  isSyncing.value = false;
+                  syncStatusMsg.value = '';
+                }
               }
             }, 1200);
 
@@ -5414,226 +5440,100 @@
           }
         }
 
-        function formatCurrency(val, decimals = 2) {
-          const num = parseFloat(val);
-          if (isNaN(num)) return '0.00';
-          return Math.abs(num).toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
-        }
-
-        function formatSignedCurrency(val, decimals = 2) {
-          const num = parseFloat(val);
-          if (isNaN(num)) return '$0.00';
-          const sign = num > 0 ? '+' : (num < 0 ? '-' : '+');
-          const abs = Math.abs(num).toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
-          return `${sign}$${abs}`;
-        }
-
-        function formatSignedPercent(val, decimals = 1) {
-          const num = parseFloat(val);
-          if (isNaN(num)) return '0.0%';
-          const sign = num > 0 ? '+' : (num < 0 ? '-' : '');
-          const abs = Math.abs(num).toFixed(decimals);
-          return `${sign}${abs}%`;
-        }
-
-        function formatNumber(val) {
-          const num = parseFloat(val);
-          if (isNaN(num)) return val;
-          return num.toLocaleString('en-US', { maximumFractionDigits: 4 });
-        }
-
-        function formatAmount(val, maxDecimals = 8) {
-          const num = parseFloat(val);
-          if (isNaN(num)) return val;
-          return num.toLocaleString('en-US', { maximumFractionDigits: maxDecimals });
-        }
-
-        function formatNetAmount(tr) {
-          if (!tr || tr.type !== 'buy') return '—';
-          if (tr.net_amount !== undefined && tr.net_amount !== null && !isNaN(parseFloat(tr.net_amount))) {
-            return formatAmount(tr.net_amount);
-          }
-          const amt = parseFloat(tr.amount) || 0;
-          const fee = parseFloat(tr.fee) || 0;
-          return formatAmount(Math.max(0, amt - fee));
-        }
-
         function formatTimestamp(raw) {
           return formatDate(raw, currentLang.value);
         }
 
-        function isTomanMarket(market) {
-          if (!market) return false;
-          const m = market.toUpperCase();
-          return m.includes('RLS') || m.includes('IRT') || m.includes('IRR');
-        }
-
-        function formatMarket(market) {
-          if (!market) return '-';
-          return market.toUpperCase().replace('RLS', 'IRT').replace('IRR', 'IRT');
-        }
-
-        function formatCurrencyName(curr) {
-          if (!curr) return '';
-          const c = curr.toUpperCase();
-          if (c === 'RLS' || c === 'IRR' || c === 'IRT') {
-            return currentLang.value === 'fa' ? 'تومان' : 'IRT';
-          }
-          return c;
-        }
-
-        function formatToman(val) {
-          const num = parseFloat(val);
-          if (isNaN(num)) return '0';
-          return Math.round(num).toLocaleString('en-US');
-        }
-
         function formatPositionPrice(val, dstCurrency) {
-          const num = parseFloat(val);
-          if (isNaN(num) || num === 0) return '-';
-          const dst = (dstCurrency || '').toUpperCase();
-          if (dst === 'RLS' || dst === 'IRR' || dst === 'IRT') {
-            const toman = dst === 'IRT' ? Math.round(num) : Math.round(num / 10);
-            return toman.toLocaleString('en-US') + ' ' + (currentLang.value === 'fa' ? 'تومان' : 'IRT');
-          }
-          const dec = num >= 1 ? 2 : 4;
-          return '$' + num.toLocaleString('en-US', { minimumFractionDigits: dec, maximumFractionDigits: 4 });
+          return formatPositionPriceUtil(val, dstCurrency, currentLang.value);
         }
 
         function formatPositionPnl(val, dstCurrency) {
-          const num = parseFloat(val);
-          if (isNaN(num)) return '-';
-          const dst = (dstCurrency || '').toUpperCase();
-          const sign = num > 0 ? '+' : (num < 0 ? '-' : '');
-          const absNum = Math.abs(num);
-          if (dst === 'RLS' || dst === 'IRR' || dst === 'IRT') {
-            const toman = dst === 'IRT' ? Math.round(absNum) : Math.round(absNum / 10);
-            return sign + toman.toLocaleString('en-US') + ' ' + (currentLang.value === 'fa' ? 'تومان' : 'IRT');
-          }
-          return sign + absNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) + ' USDT';
+          return formatPositionPnlUtil(val, dstCurrency, currentLang.value);
         }
 
         function formatPositionCollateral(val, srcCurrency, dstCurrency) {
-          const num = parseFloat(val);
-          if (isNaN(num) || num === 0) return '-';
-          const dst = (dstCurrency || '').toUpperCase();
-          if (dst === 'RLS' || dst === 'IRR') {
-            const toman = Math.round(num / 10);
-            return toman.toLocaleString('en-US') + ' ' + (currentLang.value === 'fa' ? 'تومان' : 'IRT');
-          }
-          return formatAmount(num);
+          return formatPositionCollateralUtil(val, srcCurrency, dstCurrency, currentLang.value);
         }
 
         function formatPositionFee(val, dstCurrency) {
-          const num = parseFloat(val);
-          if (isNaN(num) || num === 0) return '0';
-          const dst = (dstCurrency || '').toUpperCase();
-          if (dst === 'RLS' || dst === 'IRR' || dst === 'IRT') {
-            const toman = dst === 'IRT' ? Math.round(num) : Math.round(num / 10);
-            return toman.toLocaleString('en-US') + ' ' + (currentLang.value === 'fa' ? 'تومان' : 'IRT');
-          }
-          const dec = num >= 1 ? 2 : (num >= 0.01 ? 3 : 4);
-          return '$' + num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: dec });
+          return formatPositionFeeUtil(val, dstCurrency, currentLang.value);
         }
 
         function formatTradePrice(price, market) {
-          const num = parseFloat(price);
-          if (isNaN(num)) return price;
-          if (isTomanMarket(market)) {
-            const toman = Math.round(num / 10);
-            return toman.toLocaleString('en-US') + ' ' + (currentLang.value === 'fa' ? 'تومان' : 'IRT');
-          }
-          const dec = num >= 1 ? 2 : 4;
-          return '$' + num.toLocaleString('en-US', { minimumFractionDigits: dec, maximumFractionDigits: 4 });
+          return formatTradePriceUtil(price, market, currentLang.value);
         }
 
         function formatTradeTotal(total, market) {
-          const num = parseFloat(total);
-          if (isNaN(num)) return total;
-          if (isTomanMarket(market)) {
-            const toman = Math.round(num / 10);
-            return toman.toLocaleString('en-US') + ' ' + (currentLang.value === 'fa' ? 'تومان' : 'IRT');
-          }
-          return '$' + num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+          return formatTradeTotalUtil(total, market, currentLang.value);
         }
 
-        function formatTradeFee(fee, market, type, srcCurr) {
-          const num = parseFloat(fee);
-          if (isNaN(num)) return fee;
-          if (isTomanMarket(market)) {
-            const toman = Math.round(num / 10);
-            return toman.toLocaleString('en-US') + ' ' + (currentLang.value === 'fa' ? 'تومان' : 'IRT');
-          }
-          return formatAmount(num);
+        function formatTradeFee(fee, market) {
+          return formatTradeFeeUtil(fee, market, currentLang.value);
         }
 
         const iconsManifest = ref({});
 
         async function fetchIconsManifest() {
           try {
-            const res = await fetch('/static/icons/manifest.json');
-            iconsManifest.value = await res.json();
+            iconsManifest.value = await fetchJson('/static/icons/manifest.json');
           } catch (e) {
             console.error('Error fetching icons manifest:', e);
           }
         }
 
         function getAssetIcon(symbol) {
-          if (!symbol) return '/static/icons/generic.svg';
-          const s = symbol.toLowerCase().replace('1k_shib', '1k_shib');
-          if (iconsManifest.value[s]) return iconsManifest.value[s];
-          if (s === 'matic') return '/static/icons/pol.svg';
-          if (s === 'ton') return '/static/icons/gram.png';
-          if (s === 'rls' || s === 'irr') return '/static/icons/irt.svg';
-          return `/static/icons/${s}.svg`;
+          return resolveAssetIcon(symbol, iconsManifest.value);
         }
 
         function getMarketBaseIcon(market) {
-          if (!market) return '/static/icons/generic.svg';
-          const base = market.split('-')[0].toLowerCase();
-          return getAssetIcon(base);
-        }
-
-        function handleImgError(e) {
-          e.target.src = '/static/icons/generic.svg';
+          return resolveMarketBaseIcon(market, iconsManifest.value);
         }
 
         const priceUpdatedTime = ref('');
         const wsConnected = ref(false);
-        let localWs = null;
-        let wsReconnectTimer = null;
-        let wsReconnectDelay = 2000;
-        let wsPrivateRefreshTimer = null;
         const tvWsSubscribers = new Map();
 
-        function normalizeWsResolution(res) {
-          const r = String(res || '').trim().toUpperCase();
-          if (r === '1W' || r === 'W') return null;
-          if (r === '1D' || r === 'D') return 'D';
-          if (r === '1H') return '60';
-          if (r === '4H') return '240';
-          if (r === '15M') return '15';
-          if (r === '30M') return '30';
-          if (r === '5M') return '5';
-          if (r === '1M') return '1';
-          return r;
-        }
+        const wsClient = createLocalWsClient({
+          onStatus: (connected) => {
+            wsConnected.value = connected;
+          },
+          onOpen: () => {
+            for (const sub of tvWsSubscribers.values()) {
+              wsClient.send({
+                action: 'subscribe_candle',
+                symbol: sub.symbol,
+                resolution: sub.resolution,
+              });
+            }
+          },
+          onMarketStats: (data) => {
+            applyWsMarketStats(data);
+          },
+          onCandle: (sym, res, bar) => {
+            for (const sub of tvWsSubscribers.values()) {
+              if (sub.symbol === sym && sub.resolution === res && typeof sub.callback === 'function') {
+                sub.callback(bar);
+              }
+            }
+          },
+          onPrivateRefresh: (includeTrades) => {
+            fetchOpenOrders(false);
+            if (includeTrades) {
+              fetchTrades();
+              fetchPortfolio();
+              fetchStats();
+            }
+          },
+        });
 
         function sendWsJson(payload) {
-          if (localWs && localWs.readyState === WebSocket.OPEN) {
-            try {
-              localWs.send(JSON.stringify(payload));
-            } catch (e) {}
-          }
+          wsClient.send(payload);
         }
 
         function applyWsMarketStats(statsMap) {
           if (!statsMap || typeof statsMap !== 'object') return;
-          const now = new Date();
-          const hh = String(now.getHours()).padStart(2, '0');
-          const mm = String(now.getMinutes()).padStart(2, '0');
-          const ss = String(now.getSeconds()).padStart(2, '0');
-          priceUpdatedTime.value = `${hh}:${mm}:${ss}`;
+          priceUpdatedTime.value = getTehranTimeStr();
 
           // 1. Update marketDetails latest prices
           if (marketDetails.value && typeof marketDetails.value === 'object') {
@@ -5753,89 +5653,12 @@
           }
         }
 
-        function schedulePrivateWsRefresh(includeTrades = false) {
-          if (wsPrivateRefreshTimer) clearTimeout(wsPrivateRefreshTimer);
-          wsPrivateRefreshTimer = setTimeout(() => {
-            wsPrivateRefreshTimer = null;
-            fetchOpenOrders(false);
-            if (includeTrades) {
-              fetchTrades();
-              fetchPortfolio();
-              fetchStats();
-            }
-          }, 600);
-        }
-
-        function connectLocalWebSocket() {
-          if (wsReconnectTimer) {
-            clearTimeout(wsReconnectTimer);
-            wsReconnectTimer = null;
-          }
-          try {
-            const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${proto}//${window.location.host}/ws`;
-            localWs = new WebSocket(wsUrl);
-            localWs.onopen = () => {
-              wsReconnectDelay = 2000;
-              for (const sub of tvWsSubscribers.values()) {
-                sendWsJson({
-                  action: 'subscribe_candle',
-                  symbol: sub.symbol,
-                  resolution: sub.resolution
-                });
-              }
-            };
-            localWs.onmessage = (evt) => {
-              try {
-                const msg = JSON.parse(evt.data);
-                if (!msg || typeof msg !== 'object') return;
-                if (msg.type === 'status') {
-                  wsConnected.value = Boolean(msg.upstream_connected);
-                } else if (msg.type === 'market_stats' && msg.data) {
-                  wsConnected.value = true;
-                  applyWsMarketStats(msg.data);
-                } else if (msg.type === 'candle' && msg.bar) {
-                  const sym = String(msg.symbol || '').toUpperCase();
-                  const res = normalizeWsResolution(msg.resolution);
-                  for (const sub of tvWsSubscribers.values()) {
-                    if (sub.symbol === sym && sub.resolution === res && typeof sub.callback === 'function') {
-                      sub.callback(msg.bar);
-                    }
-                  }
-                } else if (msg.type === 'private_order') {
-                  schedulePrivateWsRefresh(false);
-                } else if (msg.type === 'private_trade') {
-                  schedulePrivateWsRefresh(true);
-                }
-              } catch (e) {}
-            };
-            localWs.onclose = () => {
-              wsConnected.value = false;
-              localWs = null;
-              wsReconnectTimer = setTimeout(() => {
-                wsReconnectDelay = Math.min(wsReconnectDelay * 1.5, 15000);
-                connectLocalWebSocket();
-              }, wsReconnectDelay);
-            };
-            localWs.onerror = () => {
-              wsConnected.value = false;
-            };
-          } catch (e) {
-            wsConnected.value = false;
-          }
-        }
-
         async function refreshPricesOnly() {
           if (isSyncing.value) return;
           try {
-            const res = await fetch('/api/prices/refresh', { method: 'POST' });
-            const data = await res.json();
-            if (data.status === 'ok') {
-              const now = new Date();
-              const hh = String(now.getHours()).padStart(2, '0');
-              const mm = String(now.getMinutes()).padStart(2, '0');
-              const ss = String(now.getSeconds()).padStart(2, '0');
-              priceUpdatedTime.value = `${hh}:${mm}:${ss}`;
+            const data = await fetchJson('/api/prices/refresh', { method: 'POST' });
+            if (data && data.status === 'ok') {
+              priceUpdatedTime.value = getTehranTimeStr();
               await fetchPortfolio();
               await fetchMarkets();
               if (activeTab.value === 'margin') {
@@ -5855,25 +5678,6 @@
         const calendarMode = ref('all'); // 'all', 'spot', 'futures'
         const selectedDayKey = ref('');
 
-        function getTehranNow() {
-          try {
-            const fmt = new Intl.DateTimeFormat('en-US', {
-              timeZone: 'Asia/Tehran',
-              year: 'numeric',
-              month: 'numeric',
-              day: 'numeric'
-            });
-            const parts = fmt.formatToParts(new Date());
-            const p = {};
-            for (const part of parts) p[part.type] = parseInt(part.value, 10);
-            return { gy: p.year, gm: p.month, gd: p.day };
-          } catch {
-            const tehranMs = Date.now() + (3 * 60 + 30) * 60 * 1000;
-            const dTehran = new Date(tehranMs);
-            return { gy: dTehran.getUTCFullYear(), gm: dTehran.getUTCMonth() + 1, gd: dTehran.getUTCDate() };
-          }
-        }
-
         const nowTehran = getTehranNow();
         const calGregorian = reactive({
           year: nowTehran.gy,
@@ -5888,8 +5692,8 @@
         async function fetchCalendarData() {
           calendarLoading.value = true;
           try {
-            const res = await fetch('/api/analytics/pnl-calendar?since=all');
-            const data = await res.json();
+            const data = await fetchJson('/api/analytics/pnl-calendar?since=all');
+            calendarLoadedOnce = true;
             calendarData.value = data;
 
             // Auto-select latest active day if none selected
@@ -5987,8 +5791,7 @@
 
         const monthTitle = computed(() => {
           if (currentLang.value === 'fa' && window.jalaali) {
-            const jMonths = ['فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور', 'مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند'];
-            const mName = jMonths[calJalali.month - 1] || '';
+            const mName = J_MONTHS[calJalali.month - 1] || '';
             return `${mName} ${calJalali.year}`;
           } else {
             const gMonths = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -6159,23 +5962,7 @@
         const selectedDayData = computed(() => {
           if (!selectedDayKey.value) return null;
           const stats = calendarData.value.daily_stats?.[selectedDayKey.value] || null;
-
-          const parts = selectedDayKey.value.split('-').map(Number);
-          let formattedTitle = selectedDayKey.value;
-          if (parts.length === 3) {
-            const [gy, gm, gd] = parts;
-            if (currentLang.value === 'fa' && window.jalaali) {
-              const j = window.jalaali.toJalaali(gy, gm, gd);
-              const jMonths = ['فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور', 'مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند'];
-              const dateObj = new Date(gy, gm - 1, gd);
-              const weekDaysFa = ['یکشنبه', 'دوشنبه', 'سه‌شنبه', 'چهارشنبه', 'پنج‌شنبه', 'جمعه', 'شنبه'];
-              const wName = weekDaysFa[dateObj.getDay()] || '';
-              formattedTitle = `${wName}، ${j.jd} ${jMonths[j.jm - 1]} ${j.jy} (${selectedDayKey.value})`;
-            } else {
-              const dateObj = new Date(gy, gm - 1, gd);
-              formattedTitle = dateObj.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-            }
-          }
+          const formattedTitle = formatSelectedDayTitle(selectedDayKey.value, currentLang.value, window.jalaali);
 
           return {
             dateKey: selectedDayKey.value,
@@ -6191,17 +5978,19 @@
         onMounted(() => {
           fetchIconsManifest();
           fetchStats();
-          fetchPortfolio();
+          fetchPortfolio(); // internally triggers fetchEquityCurve()
           fetchPositions();
           fetchMarkets();
           fetchTrades();
-          fetchCalendarData();
-          fetchEquityCurve();
           fetchJournal();
           fetchChartSymbols();
-          fetchOpenOrders();
 
-          if (activeTab.value === 'chart') {
+          // Lazy-load calendar & open orders only when initially active (otherwise loaded on tab switch)
+          if (activeTab.value === 'calendar') {
+            fetchCalendarData();
+          } else if (activeTab.value === 'orders') {
+            fetchOpenOrders();
+          } else if (activeTab.value === 'chart') {
             nextTick(() => {
               initTradingViewChart();
             });
@@ -6209,20 +5998,55 @@
             nextTick(() => renderCharts());
           }
 
-          // 1. Connect to local backend WebSocket bridge (ADR-012 compliant) & load user tier badge
-          connectLocalWebSocket();
-          fetchUserProfile();
+          // 1. Connect to local backend WebSocket bridge (ADR-012 compliant)
+          wsClient.connect();
 
           // 2. Auto-trigger sync on page open (per user request)
           triggerSync();
 
           // 3. Fallback REST polling every 60s ONLY when real-time WS is disconnected
-          setInterval(() => {
+          fallbackPollTimer = setInterval(() => {
             if (!isSyncing.value && !wsConnected.value) {
               refreshPricesOnly();
-              fetchOpenOrders();
+              if (ordersLoadedOnce || activeTab.value === 'orders') {
+                fetchOpenOrders();
+              }
             }
           }, 60000);
+        });
+
+        onUnmounted(() => {
+          if (syncPollTimer) {
+            clearInterval(syncPollTimer);
+            syncPollTimer = null;
+          }
+          if (fallbackPollTimer) {
+            clearInterval(fallbackPollTimer);
+            fallbackPollTimer = null;
+          }
+          if (searchTimeout) {
+            clearTimeout(searchTimeout);
+            searchTimeout = null;
+          }
+          portfolioReqGuard.abort();
+          tradesReqGuard.abort();
+          equityReqGuard.abort();
+          assetTradesReqGuard.abort();
+          wsClient.disconnect();
+          closeRiskAudioContext();
+          if (typeof window !== 'undefined') {
+            window.removeEventListener('keydown', handleKeydown);
+            window.removeEventListener('popstate', handlePopstate);
+          }
+          if (chartAllocationInstance) { chartAllocationInstance.destroy(); chartAllocationInstance = null; }
+          if (chartPnlInstance) { chartPnlInstance.destroy(); chartPnlInstance = null; }
+          if (chartTimelineInstance) { chartTimelineInstance.destroy(); chartTimelineInstance = null; }
+          if (chartEquityInstance) { chartEquityInstance.destroy(); chartEquityInstance = null; }
+          if (tvWidgetInstance) {
+            try { tvWidgetInstance.remove(); } catch {}
+            tvWidgetInstance = null;
+            isTvChartReady = false;
+          }
         });
 
         // ==========================================
@@ -6244,6 +6068,14 @@
           leverage: 5,
         });
 
+        function applyCalcDefaults(entryPrice, side, onlyUpdateTpIfSet = false) {
+          const { stopLoss, takeProfit } = computeDefaultSlTp(entryPrice, side, true);
+          calcForm.stopLoss = stopLoss;
+          if (!onlyUpdateTpIfSet || calcForm.takeProfit) {
+            calcForm.takeProfit = takeProfit;
+          }
+        }
+
         function openCalculatorModal(prefillMarket = null) {
           if (prefillMarket && marketDetails.value[prefillMarket]) {
             calcForm.market = prefillMarket;
@@ -6255,13 +6087,7 @@
           if (info && (!calcForm.entryPrice || Number(calcForm.entryPrice) <= 0)) {
             calcForm.entryPrice = info.latest || '';
             if (info.latest > 0) {
-              if (calcForm.side === 'buy') {
-                calcForm.stopLoss = Number((info.latest * 0.98).toFixed(2));
-                calcForm.takeProfit = Number((info.latest * 1.04).toFixed(2));
-              } else {
-                calcForm.stopLoss = Number((info.latest * 1.02).toFixed(2));
-                calcForm.takeProfit = Number((info.latest * 0.96).toFixed(2));
-              }
+              applyCalcDefaults(info.latest, calcForm.side, false);
             }
           }
           isCalculatorOpen.value = true;
@@ -6275,17 +6101,7 @@
           const info = marketDetails.value[calcForm.market];
           if (info && info.latest > 0) {
             calcForm.entryPrice = info.latest;
-            if (calcForm.side === 'buy') {
-              calcForm.stopLoss = Number((info.latest * 0.98).toFixed(2));
-              if (calcForm.takeProfit) {
-                calcForm.takeProfit = Number((info.latest * 1.04).toFixed(2));
-              }
-            } else {
-              calcForm.stopLoss = Number((info.latest * 1.02).toFixed(2));
-              if (calcForm.takeProfit) {
-                calcForm.takeProfit = Number((info.latest * 0.96).toFixed(2));
-              }
-            }
+            applyCalcDefaults(info.latest, calcForm.side, true);
           }
         }
 
@@ -6294,13 +6110,7 @@
           if (info) {
             calcForm.entryPrice = info.latest > 0 ? info.latest : '';
             if (info.latest > 0) {
-              if (calcForm.side === 'buy') {
-                calcForm.stopLoss = Number((info.latest * 0.98).toFixed(2));
-                calcForm.takeProfit = Number((info.latest * 1.04).toFixed(2));
-              } else {
-                calcForm.stopLoss = Number((info.latest * 1.02).toFixed(2));
-                calcForm.takeProfit = Number((info.latest * 0.96).toFixed(2));
-              }
+              applyCalcDefaults(info.latest, calcForm.side, false);
             }
             const maxLev = info.max_leverage || 5;
             if (calcForm.leverage > maxLev) {
@@ -6313,13 +6123,7 @@
           calcForm.side = side;
           const ep = Number(calcForm.entryPrice);
           if (ep > 0) {
-            if (side === 'buy') {
-              calcForm.stopLoss = Number((ep * 0.98).toFixed(2));
-              if (calcForm.takeProfit) calcForm.takeProfit = Number((ep * 1.04).toFixed(2));
-            } else {
-              calcForm.stopLoss = Number((ep * 1.02).toFixed(2));
-              if (calcForm.takeProfit) calcForm.takeProfit = Number((ep * 0.96).toFixed(2));
-            }
+            applyCalcDefaults(ep, side, true);
           }
         }
 
@@ -6574,8 +6378,7 @@
 
         async function fetchJournal() {
           try {
-            const res = await fetch('/api/journal');
-            const data = await res.json();
+            const data = await fetchJson('/api/journal');
             journalEntries.value = data.entries || [];
             journalTagsSummary.value = data.tags_summary || [];
             const map = {};
@@ -6653,13 +6456,12 @@
               tags: journalForm.tags,
               rating: journalForm.rating,
             };
-            const res = await fetch('/api/journal', {
+            const data = await fetchJson('/api/journal', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(payload),
             });
-            const data = await res.json();
-            if (data.status === 'ok' && data.entry) {
+            if (data && data.status === 'ok' && data.entry) {
               const key = `${data.entry.entry_type}:${data.entry.target_id}`;
               journalMap.value[key] = data.entry;
               if (journalTarget.item) {
@@ -6680,9 +6482,8 @@
           if (!confirm(t('journalDeleteConfirm'))) return;
           try {
             const url = `/api/journal?entry_type=${journalTarget.entry_type}&target_id=${journalTarget.target_id}`;
-            const res = await fetch(url, { method: 'DELETE' });
-            const data = await res.json();
-            if (data.status === 'ok') {
+            const data = await fetchJson(url, { method: 'DELETE' });
+            if (data && data.status === 'ok') {
               const key = `${journalTarget.entry_type}:${journalTarget.target_id}`;
               delete journalMap.value[key];
               if (journalTarget.item) {
@@ -6696,31 +6497,27 @@
           }
         }
 
-        // Close modals on Esc key & Delete selected chart overlay on Delete / Backspace
+        // Close all active modals on Esc key (cleaned up in onUnmounted)
+        function handleKeydown(e) {
+          if (e.key === 'Escape') {
+            if (isAssetDetailsModalOpen.value) closeAssetDetailsModal();
+            if (isCancelModalOpen.value) closeCancelModal();
+            if (isCollateralModalOpen.value) closeCollateralModal();
+            if (isClosePosModalOpen.value) closeClosePosModal();
+            if (isBulkCancelModalOpen.value) closeBulkCancelModal();
+            if (isJournalModalOpen.value) closeJournalModal();
+            if (isCalculatorOpen.value) closeCalculatorModal();
+            chartIsSearchOpen.value = false;
+          }
+        }
         if (typeof window !== 'undefined') {
-          window.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') {
-              if (isAssetDetailsModalOpen.value) {
-                closeAssetDetailsModal();
-              }
-              if (isCancelModalOpen.value) {
-                closeCancelModal();
-              }
-              if (isJournalModalOpen.value) {
-                closeJournalModal();
-              }
-              if (isCalculatorOpen.value) {
-                closeCalculatorModal();
-              }
-              chartIsSearchOpen.value = false;
-            }
-          });
+          window.addEventListener('keydown', handleKeydown);
         }
 
         // ==========================================
         // ADVANCED PRICE CHART (TradingView)
         // ==========================================
-        const chartSymbol = ref((initialSym ? initialSym.toUpperCase() : null) || 'BTCUSDT');
+        const chartSymbol = ref(initialSym || 'BTCUSDT');
         const chartTimeframe = ref(urlParams.get('tf') || urlParams.get('timeframe') || '1D');
         const chartSymbols = ref([]);
         const chartSearchQuery = ref('');
@@ -6750,26 +6547,9 @@
           );
         });
 
-        function getResolutionForTimeframe(tf) {
-          switch (tf) {
-            case '15m': return '15';
-            case '30m': return '30';
-            case '1h':
-            case '1H': return '60';
-            case '4h':
-            case '4H': return '240';
-            case '1D': return 'D';
-            case '1W': return '1W';
-            default: return 'D';
-          }
-        }
-
         async function fetchChartSymbols() {
           try {
-            const resp = await fetch('/api/chart/symbols');
-            if (resp.ok) {
-              chartSymbols.value = await resp.json();
-            }
+            chartSymbols.value = await fetchJson('/api/chart/symbols');
           } catch (e) {
             console.error('Error fetching chart symbols:', e);
           }
@@ -6785,8 +6565,7 @@
             if (from !== null && from !== undefined) url += `&from_ts=${Math.floor(from)}`;
             if (to !== null && to !== undefined) url += `&to_ts=${Math.floor(to)}`;
 
-            const resp = await fetch(url);
-            const data = await resp.json();
+            const data = await fetchJson(url);
             if (data.status === 'restricted') {
               chartRestricted.value = true;
               return [];
@@ -6803,40 +6582,21 @@
           }
         }
 
-        async function selectChartSymbol(symbol) {
+        function selectChartSymbol(symbol) {
           chartSymbol.value = symbol;
           chartIsSearchOpen.value = false;
-          if (tvWidgetInstance && isTvChartReady && tvWidgetInstance.activeChart) {
-            try {
-              tvWidgetInstance.activeChart().setSymbol(symbol);
-            } catch (e) {
-              console.error('TradingView setSymbol error:', e);
-            }
-          }
-        }
-
-        async function selectChartTimeframe(tf) {
-          chartTimeframe.value = tf;
-          if (tvWidgetInstance && isTvChartReady && tvWidgetInstance.activeChart) {
-            const res = getResolutionForTimeframe(tf);
-            try {
-              tvWidgetInstance.activeChart().setResolution(res);
-            } catch (e) {
-              console.error('TradingView setResolution error:', e);
-            }
-          }
         }
 
         function openChartForSymbol(sym) {
           chartSymbol.value = sym;
           activeTab.value = 'chart';
-          nextTick(async () => {
+          nextTick(() => {
             initTradingViewChart();
-            await selectChartSymbol(sym);
           });
         }
 
         async function openAssetDetailsModal(holding) {
+          const { id: reqId, signal } = assetTradesReqGuard.begin();
           selectedAssetHolding.value = holding;
           isAssetDetailsModalOpen.value = true;
           assetTradesLoading.value = true;
@@ -6849,15 +6609,17 @@
             });
             if (spotDateFrom.value) params.set('from_date', spotDateFrom.value);
             if (spotDateTo.value) params.set('to_date', spotDateTo.value);
-            const resp = await fetch(`/api/trades?${params.toString()}`);
-            if (resp.ok) {
-              const data = await resp.json();
-              assetTrades.value = data.trades || [];
-            }
+            const data = await fetchJson(`/api/trades?${params.toString()}`, { signal });
+            if (!assetTradesReqGuard.isLatest(reqId)) return;
+            assetTrades.value = data.trades || [];
           } catch (e) {
-            console.error('Error fetching asset trades:', e);
+            if (e.name !== 'AbortError') {
+              console.error('Error fetching asset trades:', e);
+            }
           } finally {
-            assetTradesLoading.value = false;
+            if (assetTradesReqGuard.isLatest(reqId)) {
+              assetTradesLoading.value = false;
+            }
           }
         }
 
@@ -6993,26 +6755,13 @@
             return;
           }
           if (tvWidgetInstance) {
-            if (isTvChartReady && tvWidgetInstance.activeChart) {
-              try {
-                if (tvWidgetInstance.activeChart().symbol() !== chartSymbol.value) {
-                  tvWidgetInstance.activeChart().setSymbol(chartSymbol.value);
-                }
-              } catch (e) {
-                console.warn('Error setting symbol on existing TradingView widget:', e);
-              }
-            }
+            syncTvSymbol(chartSymbol.value);
             return;
           }
           const dom = document.getElementById('tv-chart-container');
           if (!dom) return;
 
-          let res = 'D';
-          if (chartTimeframe.value === '15m') res = '15';
-          else if (chartTimeframe.value === '30m') res = '30';
-          else if (chartTimeframe.value === '1h') res = '60';
-          else if (chartTimeframe.value === '4h') res = '240';
-          else if (chartTimeframe.value === '1W') res = '1W';
+          const res = getResolutionForTimeframe(chartTimeframe.value);
 
           tvWidgetInstance = new window.TradingView.widget({
             container: 'tv-chart-container',
@@ -7080,28 +6829,15 @@
 
           // 2. Chart states
           const sym = params.get('symbol') || params.get('sym');
-          if (sym) {
-            const cleanSym = sym.toUpperCase();
+          if (isValidSymbol(sym)) {
+            const cleanSym = sym.trim().toUpperCase();
             chartSymbol.value = cleanSym;
-            if (tvWidgetInstance && isTvChartReady && tvWidgetInstance.activeChart) {
-              try {
-                if (tvWidgetInstance.activeChart().symbol() !== cleanSym) {
-                  tvWidgetInstance.activeChart().setSymbol(cleanSym);
-                }
-              } catch (e) {}
-            }
+            syncTvSymbol(cleanSym);
           }
           const tf = params.get('tf') || params.get('timeframe');
           if (tf && ['15m', '30m', '1h', '4h', '1D', '1W'].includes(tf)) {
             chartTimeframe.value = tf;
-            if (tvWidgetInstance && isTvChartReady && tvWidgetInstance.activeChart) {
-              const res = getResolutionForTimeframe(tf);
-              try {
-                if (tvWidgetInstance.activeChart().resolution() !== res) {
-                  tvWidgetInstance.activeChart().setResolution(res);
-                }
-              } catch (e) {}
-            }
+            syncTvResolution(tf);
           }
 
           // 3. Calendar states
@@ -7110,7 +6846,7 @@
             calendarMode.value = cm;
           }
           const d = params.get('date');
-          if (d && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
+          if (isValidIsoDate(d)) {
             selectedDayKey.value = d;
             const [gy, gm, gd] = d.split('-').map(Number);
             calGregorian.year = gy;
@@ -7153,11 +6889,12 @@
           }
           const fromParam = params.get('from');
           const toParam = params.get('to');
-          if (fromParam || toParam) {
-            spotDateFrom.value = fromParam || '';
-            spotDateTo.value = toParam || '';
+          const validFrom = isValidIsoDate(fromParam) ? fromParam : '';
+          const validTo = isValidIsoDate(toParam) ? toParam : '';
+          if (validFrom || validTo) {
+            spotDateFrom.value = validFrom;
+            spotDateTo.value = validTo;
             spotDatePreset.value = 'custom';
-            spotPeriod.value = spotDateFrom.value || 'all';
           }
           const asset = params.get('asset');
           if (asset) {
@@ -7305,55 +7042,38 @@
 
         // Keep TradingView instance in sync whenever chartSymbol or chartTimeframe changes
         watch(chartSymbol, (newSym) => {
-          if (newSym && tvWidgetInstance && isTvChartReady && tvWidgetInstance.activeChart) {
-            try {
-              if (tvWidgetInstance.activeChart().symbol() !== newSym) {
-                tvWidgetInstance.activeChart().setSymbol(newSym);
-              }
-            } catch (e) {
-              console.warn('TradingView setSymbol watcher error:', e);
-            }
-          }
+          syncTvSymbol(newSym);
         });
 
         watch(chartTimeframe, (newTf) => {
-          if (newTf && tvWidgetInstance && isTvChartReady && tvWidgetInstance.activeChart) {
-            const res = getResolutionForTimeframe(newTf);
-            try {
-              if (tvWidgetInstance.activeChart().resolution() !== res) {
-                tvWidgetInstance.activeChart().setResolution(res);
-              }
-            } catch (e) {
-              console.warn('TradingView setResolution watcher error:', e);
-            }
-          }
+          syncTvResolution(newTf);
         });
 
         // Handle Browser Forward / Back Navigation
-        window.addEventListener('popstate', () => {
+        function handlePopstate() {
           isSyncingUrl = true;
           try {
             applyUrlState();
             if (activeTab.value === 'chart') {
               nextTick(() => {
                 initTradingViewChart();
-                if (tvWidgetInstance && isTvChartReady && tvWidgetInstance.activeChart) {
-                  try {
-                    if (tvWidgetInstance.activeChart().symbol() !== chartSymbol.value) {
-                      tvWidgetInstance.activeChart().setSymbol(chartSymbol.value);
-                    }
-                  } catch (e) {}
-                }
               });
             } else if (activeTab.value === 'spot') {
               nextTick(() => renderCharts());
+            } else if (activeTab.value === 'calendar' && !calendarLoadedOnce) {
+              fetchCalendarData();
+            } else if (activeTab.value === 'orders' && !ordersLoadedOnce) {
+              fetchOpenOrders();
             }
           } finally {
             nextTick(() => {
               isSyncingUrl = false;
             });
           }
-        });
+        }
+        if (typeof window !== 'undefined') {
+          window.addEventListener('popstate', handlePopstate);
+        }
 
         return {
           // Asset Details exports
@@ -7386,8 +7106,6 @@
           openCancelModal,
           closeCancelModal,
           confirmCancelOrder,
-          userProfile,
-          formatUserLevel,
           isCollateralModalOpen,
           isClosePosModalOpen,
           isBulkCancelModalOpen,
@@ -7418,7 +7136,6 @@
           currentChartSymbolInfo,
           filteredChartSymbols,
           selectChartSymbol,
-          selectChartTimeframe,
           openChartForSymbol,
           currentLang,
           toggleLanguage,
@@ -7430,8 +7147,6 @@
           spotDateTo,
           setSpotDatePreset,
           onDateRangeChange,
-          spotPeriod,
-          changeSpotPeriod,
           trades,
           markets,
           totalRecords,
@@ -7481,7 +7196,6 @@
           formatNetAmount,
           formatTimestamp,
           formatMarket,
-          formatCurrencyName,
           formatToman,
           formatPositionPrice,
           formatPositionPnl,
@@ -7515,7 +7229,6 @@
           selectedDayData,
           calendarSummary,
           // Equity Curve exports
-          chartEquityInstance,
           equityTimeframe,
           equityMetricMode,
           showBtcBenchmark,

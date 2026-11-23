@@ -1,9 +1,9 @@
 {
   "pyproject.toml": {
-    "mtime": 1795188096.3192708,
-    "seen": 1795219539.78487,
-    "ast_hash": "9db7c641d59a7f6fa793cffb43514c1a",
-    "semantic_hash": "9db7c641d59a7f6fa793cffb43514c1a"
+    "mtime": 1795475583.3404186,
+    "seen": 1795476556.5726998,
+    "ast_hash": "8903456f0230101c78aed8dee00f52e1",
+    "semantic_hash": "8903456f0230101c78aed8dee00f52e1"
   },
   "src/nob/__init__.py": {
     "mtime": 1794579670.9449036,
@@ -12,1246 +12,58 @@
     "semantic_hash": "4193f14003cee0505254445c2734ef38"
   },
   "src/nob/db.py": {
-    "mtime": 1795210844.1513429,
-    "seen": 1795219539.784935,
-    "ast_hash": "26d5584a35094ebed006fa0cc38dd082",
-    "semantic_hash": "26d5584a35094ebed006fa0cc38dd082"
-  },
-  "src/nob/export_csv.py": {
-    "mtime": 1794579750.0324032,
-    "seen": 1794609320.906326,
-    "ast_hash": "8b04f2dcfb5acf283725731e000d575d",
-    "semantic_hash": "8b04f2dcfb5acf283725731e000d575d"
+    "mtime": 1795475857.3396692,
+    "seen": 1795476556.572704,
+    "ast_hash": "05c7a31b083d36a30512888a95bab735",
+    "semantic_hash": "05c7a31b083d36a30512888a95bab735"
   },
   "src/nob/nobitex_client.py": {
-    "mtime": 1795203130.046874,
-    "seen": 1795219539.7849631,
-    "ast_hash": "f5a3ac5c3571d26d44bbac977da732a5",
-    "semantic_hash": "f5a3ac5c3571d26d44bbac977da732a5"
+    "mtime": 1795474555.657456,
+    "seen": 1795476556.572705,
+    "ast_hash": "4693f33ce4224c81fc4c38ded9b29b04",
+    "semantic_hash": "4693f33ce4224c81fc4c38ded9b29b04"
   },
   "src/nob/pnl.py": {
-    "mtime": 1795210823.7123494,
-    "seen": 1795219539.784964,
-    "ast_hash": "37c05ba22e6cc82339f9fa736b5ac33c",
-    "semantic_hash": "37c05ba22e6cc82339f9fa736b5ac33c"
+    "mtime": 1795475063.0655708,
+    "seen": 1795476556.572706,
+    "ast_hash": "1e9074a0cc80aa6f87619ee931a24c16",
+    "semantic_hash": "1e9074a0cc80aa6f87619ee931a24c16"
   },
   "src/nob/server.py": {
-    "mtime": 1795210802.0386813,
-    "seen": 1795219539.784965,
-    "ast_hash": "9e2984f1e7ef1bd14e72775d51118a3b",
-    "semantic_hash": "9e2984f1e7ef1bd14e72775d51118a3b"
+    "mtime": 1795475862.0148835,
+    "seen": 1795476556.5727072,
+    "ast_hash": "8d408b252eeced5ec71f357794e8e24f",
+    "semantic_hash": "8d408b252eeced5ec71f357794e8e24f"
   },
   "src/nob/static/i18n.js": {
-    "mtime": 1795208668.7894895,
-    "seen": 1795219539.784965,
-    "ast_hash": "40b345b1e4ace6eb17f31045a4a953b4",
-    "semantic_hash": "40b345b1e4ace6eb17f31045a4a953b4"
+    "mtime": 1795475270.1384645,
+    "seen": 1795476556.5727072,
+    "ast_hash": "1c531c514928f409d8d84c2319d2a8af",
+    "semantic_hash": "1c531c514928f409d8d84c2319d2a8af"
   },
   "README.md": {
-    "mtime": 1795128687.4976254,
-    "seen": 1795128917.271383,
-    "ast_hash": "d0f6628c5268a9aa82b7d9486216e175",
-    "semantic_hash": "d0f6628c5268a9aa82b7d9486216e175"
+    "mtime": 1795476231.2008486,
+    "seen": 1795476556.572722,
+    "ast_hash": "04affb326385b14851bcf688ce0f83f9",
+    "semantic_hash": "04affb326385b14851bcf688ce0f83f9"
   },
   "src/nob/static/index.html": {
-    "mtime": 1794605880.232208,
-    "seen": 1794609320.9063401,
-    "ast_hash": "196bf86013cff4a2bd58defec02bc638",
-    "semantic_hash": ""
-  },
-  "src/nob/static/icons/manifest.json": {
-    "mtime": 1794589388.017719,
-    "seen": 1795128917.27128,
-    "ast_hash": "af2d60ad7bd7470764af4b3ebd1add0a",
-    "semantic_hash": "af2d60ad7bd7470764af4b3ebd1add0a"
-  },
-  "src/nob/static/vendor/chart.umd.min.js": {
-    "mtime": 1794583519.6070666,
-    "seen": 1795128917.271281,
-    "ast_hash": "80f3acdd96dc279eee5942f6aa6251df",
-    "semantic_hash": "80f3acdd96dc279eee5942f6aa6251df"
-  },
-  "src/nob/static/vendor/jalaali.min.js": {
-    "mtime": 1794583521.0867527,
-    "seen": 1795128917.271283,
-    "ast_hash": "04e52ffa29f59f0f33696a49b7ec637c",
-    "semantic_hash": "04e52ffa29f59f0f33696a49b7ec637c"
-  },
-  "src/nob/static/vendor/tailwind.js": {
-    "mtime": 1794583517.6732168,
-    "seen": 1795128917.2712839,
-    "ast_hash": "7a614b9a197e532c00d09a23b0996b5f",
-    "semantic_hash": "7a614b9a197e532c00d09a23b0996b5f"
-  },
-  "src/nob/static/vendor/vue.esm-browser.prod.js": {
-    "mtime": 1794583514.342749,
-    "seen": 1795128917.271381,
-    "ast_hash": "c4a98fa7a2e346f21ce810ca87dba4dd",
-    "semantic_hash": "c4a98fa7a2e346f21ce810ca87dba4dd"
+    "mtime": 1795475545.4429116,
+    "seen": 1795476556.572722,
+    "ast_hash": "372f44daa9492a9897d3bb4db26f53fb",
+    "semantic_hash": "372f44daa9492a9897d3bb4db26f53fb"
   },
   "README.fa.md": {
-    "mtime": 1795128724.0022702,
-    "seen": 1795128917.271382,
-    "ast_hash": "7b5051f56d42072ffae3294cc955d1a1",
-    "semantic_hash": "7b5051f56d42072ffae3294cc955d1a1"
-  },
-  "src/nob/static/icons/1k_shib.png": {
-    "mtime": 1794589354.8114192,
-    "seen": 1794609521.4107058,
-    "ast_hash": "570db8310832b88c50ab986a819a0764",
-    "semantic_hash": ""
-  },
-  "src/nob/static/icons/aave.svg": {
-    "mtime": 1794589357.2309647,
-    "seen": 1794609521.410707,
-    "ast_hash": "900c8d1b569543c4a8ef68ce172d81d3",
-    "semantic_hash": ""
-  },
-  "src/nob/static/icons/ada.svg": {
-    "mtime": 1794589358.2080786,
-    "seen": 1794609521.410707,
-    "ast_hash": "a429378d9e8284334b85f3d77382503a",
-    "semantic_hash": ""
-  },
-  "src/nob/static/icons/baba.svg": {
-    "mtime": 1794589387.9898689,
-    "seen": 1794609521.410708,
-    "ast_hash": "c0c1d2d5bb5bfb3189e18d7e9debaef9",
-    "semantic_hash": ""
-  },
-  "src/nob/static/icons/bnb.svg": {
-    "mtime": 1794589359.2525127,
-    "seen": 1794609521.410709,
-    "ast_hash": "2626df36e7822f2ca4b9cef986fa3c12",
-    "semantic_hash": ""
-  },
-  "src/nob/static/icons/btc.svg": {
-    "mtime": 1794589360.180848,
-    "seen": 1794609521.410709,
-    "ast_hash": "edae64fcb50f425e582a9a1429784b70",
-    "semantic_hash": ""
-  },
-  "src/nob/static/icons/cake.png": {
-    "mtime": 1794589361.4602013,
-    "seen": 1794609521.41071,
-    "ast_hash": "f0af8e3c5f8d91c80989550790dd0d6f",
-    "semantic_hash": ""
-  },
-  "src/nob/static/icons/copxon.svg": {
-    "mtime": 1794589387.989709,
-    "seen": 1794609521.410711,
-    "ast_hash": "12af4a7e63f51d466414c260bf2a8a9a",
-    "semantic_hash": ""
-  },
-  "src/nob/static/icons/dai.svg": {
-    "mtime": 1794589362.5294635,
-    "seen": 1794609521.410711,
-    "ast_hash": "a1c449c29fb22f5d5fbf800137a5a83f",
-    "semantic_hash": ""
-  },
-  "src/nob/static/icons/doge.svg": {
-    "mtime": 1794589363.6606195,
-    "seen": 1794609521.410712,
-    "ast_hash": "7f63ff3991035fa33ea36c34360fca8d",
-    "semantic_hash": ""
-  },
-  "src/nob/static/icons/dogs.svg": {
-    "mtime": 1794589387.990257,
-    "seen": 1794609521.4107132,
-    "ast_hash": "72b7782ab2d8da90394f4c405bc25cd4",
-    "semantic_hash": ""
-  },
-  "src/nob/static/icons/eth.svg": {
-    "mtime": 1794589364.548466,
-    "seen": 1794609521.4107132,
-    "ast_hash": "ed79179a3b6bc2c2ee4c54d8ade79b01",
-    "semantic_hash": ""
-  },
-  "src/nob/static/icons/generic.svg": {
-    "mtime": 1794589387.9949362,
-    "seen": 1794609521.4107141,
-    "ast_hash": "76cd1e1c2d49330f1be924c3bd74b293",
-    "semantic_hash": ""
-  },
-  "src/nob/static/icons/gram.png": {
-    "mtime": 1794589365.8320339,
-    "seen": 1794609521.4107141,
-    "ast_hash": "798d08af096ae8a8a21b9025f084f1db",
-    "semantic_hash": ""
-  },
-  "src/nob/static/icons/hbar.png": {
-    "mtime": 1794589368.4338808,
-    "seen": 1794609521.4107149,
-    "ast_hash": "574d647f923aa610a06ee9f104515eb6",
-    "semantic_hash": ""
-  },
-  "src/nob/static/icons/hype.png": {
-    "mtime": 1794589369.6797583,
-    "seen": 1794609521.4107158,
-    "ast_hash": "c76d52af4680d256e03c0fddc7a09040",
-    "semantic_hash": ""
-  },
-  "src/nob/static/icons/irt.svg": {
-    "mtime": 1794589387.993577,
-    "seen": 1794609521.4107158,
-    "ast_hash": "73e2b8d4b0e881e89a583d23f782b8ce",
-    "semantic_hash": ""
-  },
-  "src/nob/static/icons/ltc.svg": {
-    "mtime": 1794589370.7204583,
-    "seen": 1794609521.410717,
-    "ast_hash": "cdae08509e949c7b6216a744b14f0087",
-    "semantic_hash": ""
-  },
-  "src/nob/static/icons/matic.svg": {
-    "mtime": 1794589375.0019696,
-    "seen": 1794609521.410718,
-    "ast_hash": "095ffad213750345fe1b2fd3cde188fd",
-    "semantic_hash": ""
-  },
-  "src/nob/static/icons/not.png": {
-    "mtime": 1794589372.1211138,
-    "seen": 1794609521.410718,
-    "ast_hash": "caa311492aab4cf39029ec510331a793",
-    "semantic_hash": ""
-  },
-  "src/nob/static/icons/paxg.svg": {
-    "mtime": 1794589373.121887,
-    "seen": 1794609521.410719,
-    "ast_hash": "cf294e6ac7b7612fd8166a8ffcf8b5ca",
-    "semantic_hash": ""
-  },
-  "src/nob/static/icons/pol.svg": {
-    "mtime": 1794589374.0659568,
-    "seen": 1794609521.410719,
-    "ast_hash": "095ffad213750345fe1b2fd3cde188fd",
-    "semantic_hash": ""
-  },
-  "src/nob/static/icons/pump.png": {
-    "mtime": 1794589376.3730536,
-    "seen": 1794609521.41072,
-    "ast_hash": "18443c7543903f68b086570e252ee736",
-    "semantic_hash": ""
-  },
-  "src/nob/static/icons/sahara.svg": {
-    "mtime": 1794589387.9904053,
-    "seen": 1794609521.410721,
-    "ast_hash": "5146c1a17aed58dcef983060769adf12",
-    "semantic_hash": ""
-  },
-  "src/nob/static/icons/shib.png": {
-    "mtime": 1794589356.1321828,
-    "seen": 1794609521.410722,
-    "ast_hash": "570db8310832b88c50ab986a819a0764",
-    "semantic_hash": ""
-  },
-  "src/nob/static/icons/slvon.svg": {
-    "mtime": 1794589387.9895296,
-    "seen": 1794609521.410722,
-    "ast_hash": "c746891acdbdd36f12905b46043e41be",
-    "semantic_hash": ""
-  },
-  "src/nob/static/icons/sol.svg": {
-    "mtime": 1794589377.3396113,
-    "seen": 1794609521.410723,
-    "ast_hash": "8f48b6e8a88f7b0aa4b6598aa7715465",
-    "semantic_hash": ""
-  },
-  "src/nob/static/icons/sui.png": {
-    "mtime": 1794589378.665015,
-    "seen": 1794609521.4107242,
-    "ast_hash": "638b5ba3fb666b4dac7f974a5cd11bb7",
-    "semantic_hash": ""
-  },
-  "src/nob/static/icons/ton.png": {
-    "mtime": 1794589367.0926712,
-    "seen": 1794609521.4107242,
-    "ast_hash": "14267cb013ffd7501a2b3b0d2e2cbe02",
-    "semantic_hash": ""
-  },
-  "src/nob/static/icons/trx.svg": {
-    "mtime": 1794589379.9715784,
-    "seen": 1794609521.410725,
-    "ast_hash": "6e61dfd0a444ac582c5abf4c384c4b5b",
-    "semantic_hash": ""
-  },
-  "src/nob/static/icons/tsm.svg": {
-    "mtime": 1794589387.990096,
-    "seen": 1794609521.4107258,
-    "ast_hash": "8b302d6c361f56c6a704b9519c171e71",
-    "semantic_hash": ""
-  },
-  "src/nob/static/icons/uni.svg": {
-    "mtime": 1794589381.067899,
-    "seen": 1794609521.4107258,
-    "ast_hash": "a4880d7266ea7ae189b03aad2fc7b5d9",
-    "semantic_hash": ""
-  },
-  "src/nob/static/icons/usdt.svg": {
-    "mtime": 1794589382.0685108,
-    "seen": 1794609521.410727,
-    "ast_hash": "f07b8f90c0eff1b76b402a2d34f0cdbe",
-    "semantic_hash": ""
-  },
-  "src/nob/static/icons/usoon.svg": {
-    "mtime": 1794589387.9892905,
-    "seen": 1794609521.410728,
-    "ast_hash": "b504b59253e7d5298434c483b31a9449",
-    "semantic_hash": ""
-  },
-  "src/nob/static/icons/xaut.png": {
-    "mtime": 1794589383.4652565,
-    "seen": 1794609521.410728,
-    "ast_hash": "fb0f5f25c195287dd6a92b964b41ed18",
-    "semantic_hash": ""
-  },
-  "src/nob/static/icons/xmr.svg": {
-    "mtime": 1794589385.5358675,
-    "seen": 1794609521.410729,
-    "ast_hash": "26a14f1c0b5bfac8c7bad92258c341ec",
-    "semantic_hash": ""
-  },
-  "src/nob/static/icons/xrp.svg": {
-    "mtime": 1794589386.558033,
-    "seen": 1794609521.41073,
-    "ast_hash": "84ce7542e288e2bf98a4da4dbde2594e",
-    "semantic_hash": ""
-  },
-  "src/nob/static/icons/zec.svg": {
-    "mtime": 1794589387.9886496,
-    "seen": 1794609521.41073,
-    "ast_hash": "b6d880e4979d09f4a6e2f3e866e96be1",
-    "semantic_hash": ""
-  },
-  "src/nob/static/vendor/tradingview/bundles/1042.7bd6143015a4458ca0eb.js": {
-    "mtime": 1794701595.6137807,
-    "seen": 1795128917.271285,
-    "ast_hash": "6638b37589c2f1cd66bc779ca5431b5c",
-    "semantic_hash": "6638b37589c2f1cd66bc779ca5431b5c"
-  },
-  "src/nob/static/vendor/tradingview/bundles/1553.c076714f5e24887f0b94.js": {
-    "mtime": 1794701595.6157455,
-    "seen": 1795128917.271286,
-    "ast_hash": "0debc4521def932af18f629a2cb7eccd",
-    "semantic_hash": "0debc4521def932af18f629a2cb7eccd"
-  },
-  "src/nob/static/vendor/tradingview/bundles/2079.f2a9f3dd7d4f8cb9f2fc.js": {
-    "mtime": 1794701595.617549,
-    "seen": 1795128917.271286,
-    "ast_hash": "646d35ce1c7b93fa33afd2950cfef1c7",
-    "semantic_hash": "646d35ce1c7b93fa33afd2950cfef1c7"
-  },
-  "src/nob/static/vendor/tradingview/bundles/2157.d1cab62b805a1a6282a1.js": {
-    "mtime": 1794701595.6185,
-    "seen": 1795128917.271287,
-    "ast_hash": "819f15d7ff6fa442996414c46d5c223a",
-    "semantic_hash": "819f15d7ff6fa442996414c46d5c223a"
-  },
-  "src/nob/static/vendor/tradingview/bundles/2227.e46f1f2d53203e1fb152.js": {
-    "mtime": 1794701595.6195004,
-    "seen": 1795128917.2712882,
-    "ast_hash": "d8170c49a6ab8729a8f2b1cfe023413b",
-    "semantic_hash": "d8170c49a6ab8729a8f2b1cfe023413b"
-  },
-  "src/nob/static/vendor/tradingview/bundles/2264.1e73b010b4ad6956c0d3.js": {
-    "mtime": 1794701595.6200469,
-    "seen": 1795128917.2712882,
-    "ast_hash": "61f2ff911a106570c60bee655363e2ef",
-    "semantic_hash": "61f2ff911a106570c60bee655363e2ef"
-  },
-  "src/nob/static/vendor/tradingview/bundles/2751.e13accd5da6697245484.js": {
-    "mtime": 1794701595.6209025,
-    "seen": 1795128917.271289,
-    "ast_hash": "ff15bb3888f7271e2b5722f2281ccebd",
-    "semantic_hash": "ff15bb3888f7271e2b5722f2281ccebd"
-  },
-  "src/nob/static/vendor/tradingview/bundles/3098.e317e819fbead3a8b108.js": {
-    "mtime": 1794701595.6251788,
-    "seen": 1795128917.271289,
-    "ast_hash": "6ff4baee9f76c7273254366ed88d834d",
-    "semantic_hash": "6ff4baee9f76c7273254366ed88d834d"
-  },
-  "src/nob/static/vendor/tradingview/bundles/3443.5802260e3c522b563151.js": {
-    "mtime": 1794701595.6260185,
-    "seen": 1795128917.27129,
-    "ast_hash": "07f514fae0c6fc327c2c06d6e37f993a",
-    "semantic_hash": "07f514fae0c6fc327c2c06d6e37f993a"
-  },
-  "src/nob/static/vendor/tradingview/bundles/3504.22bc26609f4f438a0ff5.js": {
-    "mtime": 1794701595.626696,
-    "seen": 1795128917.2712908,
-    "ast_hash": "41d8c535f9dcd7abfe9064f612bac162",
-    "semantic_hash": "41d8c535f9dcd7abfe9064f612bac162"
-  },
-  "src/nob/static/vendor/tradingview/bundles/361.0b7d3fd5d9c0b7234428.js": {
-    "mtime": 1794701595.6273456,
-    "seen": 1795128917.2712908,
-    "ast_hash": "02d51e7f5f31e25bbd1463dbb7a3adcb",
-    "semantic_hash": "02d51e7f5f31e25bbd1463dbb7a3adcb"
-  },
-  "src/nob/static/vendor/tradingview/bundles/4482.d8a5a63efb2739dac2bf.js": {
-    "mtime": 1794701595.6285315,
-    "seen": 1795128917.271292,
-    "ast_hash": "03bd1a6d753ff6a9abebb9a11c294dc2",
-    "semantic_hash": "03bd1a6d753ff6a9abebb9a11c294dc2"
-  },
-  "src/nob/static/vendor/tradingview/bundles/4774.94117311dcd036db8fc3.js": {
-    "mtime": 1794701595.6290386,
-    "seen": 1795128917.271293,
-    "ast_hash": "57bc6307b3c3efe5c72e6f51cb704afe",
-    "semantic_hash": "57bc6307b3c3efe5c72e6f51cb704afe"
-  },
-  "src/nob/static/vendor/tradingview/bundles/4804.e61dfd0736b1e1dc484f.js": {
-    "mtime": 1794701595.62919,
-    "seen": 1795128917.271293,
-    "ast_hash": "8316b9ab55ebdf8f4eff8652b4386d56",
-    "semantic_hash": "8316b9ab55ebdf8f4eff8652b4386d56"
-  },
-  "src/nob/static/vendor/tradingview/bundles/5075.8c45fa8c1b1852b25a53.js": {
-    "mtime": 1794701595.629768,
-    "seen": 1795128917.2712939,
-    "ast_hash": "a8bf0dbb911ec7aea6368a6936fe8bf9",
-    "semantic_hash": "a8bf0dbb911ec7aea6368a6936fe8bf9"
-  },
-  "src/nob/static/vendor/tradingview/bundles/5301.9c3036a1f307fa98f03a.js": {
-    "mtime": 1794701595.629918,
-    "seen": 1795128917.2712939,
-    "ast_hash": "a23be21eafc0639dcb71e2252f1532e0",
-    "semantic_hash": "a23be21eafc0639dcb71e2252f1532e0"
-  },
-  "src/nob/static/vendor/tradingview/bundles/5450.11f0aed150d079c71677.js": {
-    "mtime": 1794701595.6302917,
-    "seen": 1795128917.271295,
-    "ast_hash": "f748932fd80abc4c1357601c89258850",
-    "semantic_hash": "f748932fd80abc4c1357601c89258850"
-  },
-  "src/nob/static/vendor/tradingview/bundles/5715.5f6b9b0b26b050b9aaaf.js": {
-    "mtime": 1794701595.6326983,
-    "seen": 1795128917.271295,
-    "ast_hash": "316c4477775d0beea9e833f223ef12d3",
-    "semantic_hash": "316c4477775d0beea9e833f223ef12d3"
-  },
-  "src/nob/static/vendor/tradingview/bundles/6014.98494a842e9d8e3e6fa4.js": {
-    "mtime": 1794701595.6339233,
-    "seen": 1795128917.271296,
-    "ast_hash": "ed688a2dd7dcb3e2b57ab8ec3e6f7988",
-    "semantic_hash": "ed688a2dd7dcb3e2b57ab8ec3e6f7988"
-  },
-  "src/nob/static/vendor/tradingview/bundles/6408.53f95c8edf441cf41f5e.js": {
-    "mtime": 1794701595.6356196,
-    "seen": 1795128917.271297,
-    "ast_hash": "b1cc77358634b246e49e30d392b8e150",
-    "semantic_hash": "b1cc77358634b246e49e30d392b8e150"
-  },
-  "src/nob/static/vendor/tradingview/bundles/7223.a5a98f21c4a7b2ef69f7.js": {
-    "mtime": 1794701595.6373825,
-    "seen": 1795128917.271297,
-    "ast_hash": "f6a76933cd9ba28dbd35a687c12446c3",
-    "semantic_hash": "f6a76933cd9ba28dbd35a687c12446c3"
-  },
-  "src/nob/static/vendor/tradingview/bundles/7346.a2efeed47130dd4e832c.js": {
-    "mtime": 1794701595.6379788,
-    "seen": 1795128917.271298,
-    "ast_hash": "3dce02369351a6f3c4ebbb0488f0a881",
-    "semantic_hash": "3dce02369351a6f3c4ebbb0488f0a881"
-  },
-  "src/nob/static/vendor/tradingview/bundles/7593.ab709fe310ea76a66dae.js": {
-    "mtime": 1794701595.6392794,
-    "seen": 1795128917.271298,
-    "ast_hash": "fb9bae4f5b92e0980ff03f672d3ea34c",
-    "semantic_hash": "fb9bae4f5b92e0980ff03f672d3ea34c"
-  },
-  "src/nob/static/vendor/tradingview/bundles/7746.8c7ce523e0bf413e28f8.js": {
-    "mtime": 1794701595.639865,
-    "seen": 1795128917.2712991,
-    "ast_hash": "544a5c08b0d1297bd7a8a8ee3448890d",
-    "semantic_hash": "544a5c08b0d1297bd7a8a8ee3448890d"
-  },
-  "src/nob/static/vendor/tradingview/bundles/add-compare-dialog.2cc982d9b1e8e99945fe.js": {
-    "mtime": 1794701595.6518445,
-    "seen": 1795128917.2712991,
-    "ast_hash": "5cb0f33463081d98cac790edaba5b836",
-    "semantic_hash": "5cb0f33463081d98cac790edaba5b836"
-  },
-  "src/nob/static/vendor/tradingview/bundles/change-interval-dialog.da81f65148b6614199ad.js": {
-    "mtime": 1794701595.6522455,
-    "seen": 1795128917.2713,
-    "ast_hash": "f1fc7d382a1f4b22078e00d05391dd51",
-    "semantic_hash": "f1fc7d382a1f4b22078e00d05391dd51"
-  },
-  "src/nob/static/vendor/tradingview/bundles/chart-bottom-toolbar.44c5ff5339e5cebbbf16.js": {
-    "mtime": 1794701595.6524513,
-    "seen": 1795128917.271301,
-    "ast_hash": "72ae38fdd58cce944db362693c5f1362",
-    "semantic_hash": "72ae38fdd58cce944db362693c5f1362"
-  },
-  "src/nob/static/vendor/tradingview/bundles/chart-event-hint.f7cb977f0edde0ff7be9.js": {
-    "mtime": 1794701595.6526425,
-    "seen": 1795128917.271301,
-    "ast_hash": "e8a004069d0837780e79bf54a1f04a72",
-    "semantic_hash": "e8a004069d0837780e79bf54a1f04a72"
-  },
-  "src/nob/static/vendor/tradingview/bundles/chart-screenshot-hint.b3f237e44d9bf442a7f7.js": {
-    "mtime": 1794701595.6527975,
-    "seen": 1795128917.271302,
-    "ast_hash": "713d8e1104e7b2dff40054b463d7bec5",
-    "semantic_hash": "713d8e1104e7b2dff40054b463d7bec5"
-  },
-  "src/nob/static/vendor/tradingview/bundles/chart-storage-external-adapter.9c1267d07e48b8d8f53f.js": {
-    "mtime": 1794701595.652901,
-    "seen": 1795128917.271302,
-    "ast_hash": "6e40c9ac20dd1f5cdc8c175915d00e53",
-    "semantic_hash": "6e40c9ac20dd1f5cdc8c175915d00e53"
-  },
-  "src/nob/static/vendor/tradingview/bundles/chart-storage-library-http.30c4bc9701c3b3a3f587.js": {
-    "mtime": 1794701595.6529903,
-    "seen": 1795128917.271303,
-    "ast_hash": "e3c0fcbadc24a82b3fdcbed8a9ae20ad",
-    "semantic_hash": "e3c0fcbadc24a82b3fdcbed8a9ae20ad"
-  },
-  "src/nob/static/vendor/tradingview/bundles/chart-text-editor-renderer.8e4cca2d8edbaa930b6a.js": {
-    "mtime": 1794701595.6530862,
-    "seen": 1795128917.271303,
-    "ast_hash": "de4fd9064062400b99c82d607b69855d",
-    "semantic_hash": "de4fd9064062400b99c82d607b69855d"
-  },
-  "src/nob/static/vendor/tradingview/bundles/chart-widget-gui.6f7c69eb427cab3bfa2e.js": {
-    "mtime": 1794701595.6539264,
-    "seen": 1795128917.271308,
-    "ast_hash": "a39d6f08be23c5541166e19e8e8e0651",
-    "semantic_hash": "a39d6f08be23c5541166e19e8e8e0651"
-  },
-  "src/nob/static/vendor/tradingview/bundles/compare-model.fed2af92643b5038a181.js": {
-    "mtime": 1794701595.654118,
-    "seen": 1795128917.2713091,
-    "ast_hash": "cefcaa3c8f91dcfae91c0ab5f6a761a1",
-    "semantic_hash": "cefcaa3c8f91dcfae91c0ab5f6a761a1"
-  },
-  "src/nob/static/vendor/tradingview/bundles/context-menu-renderer.48559dc306537add0a09.js": {
-    "mtime": 1794701595.6542442,
-    "seen": 1795128917.2713091,
-    "ast_hash": "81e12913be2717af282838e7a83fae62",
-    "semantic_hash": "81e12913be2717af282838e7a83fae62"
-  },
-  "src/nob/static/vendor/tradingview/bundles/currency-label-menu.1ff82a82705dcb2779fa.js": {
-    "mtime": 1794701595.654911,
-    "seen": 1795128917.27131,
-    "ast_hash": "65fbb038f6d985ac7c08afa8522ebe85",
-    "semantic_hash": "65fbb038f6d985ac7c08afa8522ebe85"
-  },
-  "src/nob/static/vendor/tradingview/bundles/custom-intervals-add-dialog.c6b5b8efd68510b58e58.js": {
-    "mtime": 1794701595.6550934,
-    "seen": 1795128917.27131,
-    "ast_hash": "47e6e784d8dfe62607ebd123797e2ca2",
-    "semantic_hash": "47e6e784d8dfe62607ebd123797e2ca2"
-  },
-  "src/nob/static/vendor/tradingview/bundles/custom-themes-api.757d290b9817f33f2bd9.js": {
-    "mtime": 1794701595.6553583,
-    "seen": 1795128917.271311,
-    "ast_hash": "35448fb64f0c8bae5163b71f81172ccb",
-    "semantic_hash": "35448fb64f0c8bae5163b71f81172ccb"
-  },
-  "src/nob/static/vendor/tradingview/bundles/drawing-toolbar.3ba66e94e40268b30c85.js": {
-    "mtime": 1794701595.655764,
-    "seen": 1795128917.2713118,
-    "ast_hash": "ca06676319a25993513d8f9047485e7e",
-    "semantic_hash": "ca06676319a25993513d8f9047485e7e"
-  },
-  "src/nob/static/vendor/tradingview/bundles/en.101.72bd74b7fdc5a07c178b.js": {
-    "mtime": 1794701595.6560524,
-    "seen": 1795128917.2713118,
-    "ast_hash": "a72ed5cdce64fde33589c30f1ee445e0",
-    "semantic_hash": "a72ed5cdce64fde33589c30f1ee445e0"
-  },
-  "src/nob/static/vendor/tradingview/bundles/en.1184.c5f17f9f42004072d84f.js": {
-    "mtime": 1794701595.6564114,
-    "seen": 1795128917.271313,
-    "ast_hash": "bc4eaf2ae06113f4c2d13e167f16b562",
-    "semantic_hash": "bc4eaf2ae06113f4c2d13e167f16b562"
-  },
-  "src/nob/static/vendor/tradingview/bundles/en.1595.4e8ee1f5341933dc2165.js": {
-    "mtime": 1794701595.656878,
-    "seen": 1795128917.271313,
-    "ast_hash": "2887c3329e81617b07f89b6e678d96c5",
-    "semantic_hash": "2887c3329e81617b07f89b6e678d96c5"
-  },
-  "src/nob/static/vendor/tradingview/bundles/en.1962.663fd5f1898f9edbcd25.js": {
-    "mtime": 1794701595.6578279,
-    "seen": 1795128917.271314,
-    "ast_hash": "2b917f5a11625b119ac2ef35278b6d85",
-    "semantic_hash": "2b917f5a11625b119ac2ef35278b6d85"
-  },
-  "src/nob/static/vendor/tradingview/bundles/en.2238.115385d01d9d309f8373.js": {
-    "mtime": 1794701595.65825,
-    "seen": 1795128917.271314,
-    "ast_hash": "971c5c3f40cc76668e3c42133a160634",
-    "semantic_hash": "971c5c3f40cc76668e3c42133a160634"
-  },
-  "src/nob/static/vendor/tradingview/bundles/en.2257.8a5740e6ce979613f4b1.js": {
-    "mtime": 1794701595.6585453,
-    "seen": 1795128917.2713149,
-    "ast_hash": "f03456fcab6d9a0a6b05400cf839b698",
-    "semantic_hash": "f03456fcab6d9a0a6b05400cf839b698"
-  },
-  "src/nob/static/vendor/tradingview/bundles/en.2312.a9353e46c20c3019a091.js": {
-    "mtime": 1794701595.6593575,
-    "seen": 1795128917.2713149,
-    "ast_hash": "be70a53020ab2f894a85169fad75f46b",
-    "semantic_hash": "be70a53020ab2f894a85169fad75f46b"
-  },
-  "src/nob/static/vendor/tradingview/bundles/en.2364.ca2fb98290b9af9edd4c.js": {
-    "mtime": 1794701595.6598277,
-    "seen": 1795128917.271316,
-    "ast_hash": "862b81fc6b2a071c7e52b4647f80d0c7",
-    "semantic_hash": "862b81fc6b2a071c7e52b4647f80d0c7"
-  },
-  "src/nob/static/vendor/tradingview/bundles/en.2530.141b9b02516d03268ee2.js": {
-    "mtime": 1794701595.6608407,
-    "seen": 1795128917.271317,
-    "ast_hash": "2e2b2d898e611d8a4bf21d7305abd614",
-    "semantic_hash": "2e2b2d898e611d8a4bf21d7305abd614"
-  },
-  "src/nob/static/vendor/tradingview/bundles/en.2646.0e5c56264dcb2375a006.js": {
-    "mtime": 1794701595.6611388,
-    "seen": 1795128917.271317,
-    "ast_hash": "95b705b01bbbf5cf34040f86c83ef7a3",
-    "semantic_hash": "95b705b01bbbf5cf34040f86c83ef7a3"
-  },
-  "src/nob/static/vendor/tradingview/bundles/en.2831.7b64dd9e84577cc11ab5.js": {
-    "mtime": 1794701595.66143,
-    "seen": 1795128917.271318,
-    "ast_hash": "0c61372e5819b67a46f185df67f684cd",
-    "semantic_hash": "0c61372e5819b67a46f185df67f684cd"
-  },
-  "src/nob/static/vendor/tradingview/bundles/en.2870.65ad39b5928539d29f33.js": {
-    "mtime": 1794701595.6618118,
-    "seen": 1795128917.271318,
-    "ast_hash": "da45334560f14143ac1851569537cae0",
-    "semantic_hash": "da45334560f14143ac1851569537cae0"
-  },
-  "src/nob/static/vendor/tradingview/bundles/en.359.950cbed0e812beac44d9.js": {
-    "mtime": 1794701595.6622186,
-    "seen": 1795128917.2713192,
-    "ast_hash": "80f90ce0f3fa67526c2c22b2acf14411",
-    "semantic_hash": "80f90ce0f3fa67526c2c22b2acf14411"
-  },
-  "src/nob/static/vendor/tradingview/bundles/en.3796.785de1d1030dd5d4aa3e.js": {
-    "mtime": 1794701595.6624682,
-    "seen": 1795128917.2713192,
-    "ast_hash": "2999332ce19e8ca01d54633efac17bc8",
-    "semantic_hash": "2999332ce19e8ca01d54633efac17bc8"
-  },
-  "src/nob/static/vendor/tradingview/bundles/en.4040.ba1136e07b4e1fe8feea.js": {
-    "mtime": 1794701595.6627686,
-    "seen": 1795128917.27132,
-    "ast_hash": "f230b6e1e4f543ab7b8a915af261b6ac",
-    "semantic_hash": "f230b6e1e4f543ab7b8a915af261b6ac"
-  },
-  "src/nob/static/vendor/tradingview/bundles/en.4109.9fc6a921b69b97da31b8.js": {
-    "mtime": 1794701595.664235,
-    "seen": 1795128917.27132,
-    "ast_hash": "e50f75bf688ef1ff9f46e220ba3e60d1",
-    "semantic_hash": "e50f75bf688ef1ff9f46e220ba3e60d1"
-  },
-  "src/nob/static/vendor/tradingview/bundles/en.4166.f8388b9e8fd545e22535.js": {
-    "mtime": 1794701595.6646652,
-    "seen": 1795128917.271321,
-    "ast_hash": "5e0caf05017962070efc69783e29e572",
-    "semantic_hash": "5e0caf05017962070efc69783e29e572"
-  },
-  "src/nob/static/vendor/tradingview/bundles/en.4703.3516cef20b4eaac928c6.js": {
-    "mtime": 1794701595.664935,
-    "seen": 1795128917.271321,
-    "ast_hash": "73f565c5bff7f8bb913b97cf515a1356",
-    "semantic_hash": "73f565c5bff7f8bb913b97cf515a1356"
-  },
-  "src/nob/static/vendor/tradingview/bundles/en.5683.466462f4d6271f8d13c4.js": {
-    "mtime": 1794701595.6657567,
-    "seen": 1795128917.271322,
-    "ast_hash": "8999a82652fd48c624ad6d90a4838b68",
-    "semantic_hash": "8999a82652fd48c624ad6d90a4838b68"
-  },
-  "src/nob/static/vendor/tradingview/bundles/en.5757.bd43099c3855492254a0.js": {
-    "mtime": 1794701595.668067,
-    "seen": 1795128917.271322,
-    "ast_hash": "6de7a627dd2de8ac9b48d48d9d00d56b",
-    "semantic_hash": "6de7a627dd2de8ac9b48d48d9d00d56b"
-  },
-  "src/nob/static/vendor/tradingview/bundles/en.6150.6e505059a4769c317b3d.js": {
-    "mtime": 1794701595.6691585,
-    "seen": 1795128917.271323,
-    "ast_hash": "ca7d588f008b50819adf93b9ad95e5ec",
-    "semantic_hash": "ca7d588f008b50819adf93b9ad95e5ec"
-  },
-  "src/nob/static/vendor/tradingview/bundles/en.6302.093ac5958c9add03ba99.js": {
-    "mtime": 1794701595.6695445,
-    "seen": 1795128917.271324,
-    "ast_hash": "dc2969690e845c6e7dc1786b56c17383",
-    "semantic_hash": "dc2969690e845c6e7dc1786b56c17383"
-  },
-  "src/nob/static/vendor/tradingview/bundles/en.6342.c27e9d39485768c198f1.js": {
-    "mtime": 1794701595.6702502,
-    "seen": 1795128917.271324,
-    "ast_hash": "43f68bafcbad575a740839d63a5af0a3",
-    "semantic_hash": "43f68bafcbad575a740839d63a5af0a3"
-  },
-  "src/nob/static/vendor/tradingview/bundles/en.6703.b71c9c2bcb964acc4d35.js": {
-    "mtime": 1794701595.6705816,
-    "seen": 1795128917.2713249,
-    "ast_hash": "0d40a6153fec2c67f4cb4ef3a2100f98",
-    "semantic_hash": "0d40a6153fec2c67f4cb4ef3a2100f98"
-  },
-  "src/nob/static/vendor/tradingview/bundles/en.6778.2272d2145f9d59a3f912.js": {
-    "mtime": 1794701595.6709108,
-    "seen": 1795128917.2713249,
-    "ast_hash": "2c2de72acfdbefd9cc98342caf47640a",
-    "semantic_hash": "2c2de72acfdbefd9cc98342caf47640a"
-  },
-  "src/nob/static/vendor/tradingview/bundles/en.6822.cf7a18b60df26a835ea8.js": {
-    "mtime": 1794701595.67248,
-    "seen": 1795128917.271326,
-    "ast_hash": "432070c36e26bed62c42b8035ed1359d",
-    "semantic_hash": "432070c36e26bed62c42b8035ed1359d"
-  },
-  "src/nob/static/vendor/tradingview/bundles/en.711.2177d12e315b6889d875.js": {
-    "mtime": 1794701595.6727352,
-    "seen": 1795128917.271326,
-    "ast_hash": "b439e576a0b35ce8b2d5b27c1f7a2a49",
-    "semantic_hash": "b439e576a0b35ce8b2d5b27c1f7a2a49"
-  },
-  "src/nob/static/vendor/tradingview/bundles/en.7230.e56bc4f0aa99693293b7.js": {
-    "mtime": 1794701595.6731977,
-    "seen": 1795128917.271327,
-    "ast_hash": "e3b6724108f12bafeffca749c1f751f3",
-    "semantic_hash": "e3b6724108f12bafeffca749c1f751f3"
-  },
-  "src/nob/static/vendor/tradingview/bundles/en.8066.105eec5eae4e3b3b80c8.js": {
-    "mtime": 1794701595.673529,
-    "seen": 1795128917.271328,
-    "ast_hash": "e7dc75da8d1cd1d04f42b922284c90ad",
-    "semantic_hash": "e7dc75da8d1cd1d04f42b922284c90ad"
-  },
-  "src/nob/static/vendor/tradingview/bundles/en.8370.ffb31a4ccb6eb8556720.js": {
-    "mtime": 1794701595.6739883,
-    "seen": 1795128917.271328,
-    "ast_hash": "00a33fdba75f51ea1c142fcc748f5794",
-    "semantic_hash": "00a33fdba75f51ea1c142fcc748f5794"
-  },
-  "src/nob/static/vendor/tradingview/bundles/en.8622.3c29960f5935444d279e.js": {
-    "mtime": 1794701595.6760254,
-    "seen": 1795128917.271329,
-    "ast_hash": "aa4cb904c797df42369f5fb93f9678a5",
-    "semantic_hash": "aa4cb904c797df42369f5fb93f9678a5"
-  },
-  "src/nob/static/vendor/tradingview/bundles/en.877.0ee92395c6661b759971.js": {
-    "mtime": 1794701595.676505,
-    "seen": 1795128917.271329,
-    "ast_hash": "c724e59a4bf6a8abace7168f32f751a7",
-    "semantic_hash": "c724e59a4bf6a8abace7168f32f751a7"
-  },
-  "src/nob/static/vendor/tradingview/bundles/en.9093.58448b805fe08d2b8434.js": {
-    "mtime": 1794701595.6774218,
-    "seen": 1795128917.27133,
-    "ast_hash": "b5a1a56c4158a20ebb4046f2913a1e7a",
-    "semantic_hash": "b5a1a56c4158a20ebb4046f2913a1e7a"
-  },
-  "src/nob/static/vendor/tradingview/bundles/en.9321.cd0fba64286aeb8f33e9.js": {
-    "mtime": 1794701595.6778657,
-    "seen": 1795128917.27133,
-    "ast_hash": "1bccb099fc3a5a45db053b97707cd149",
-    "semantic_hash": "1bccb099fc3a5a45db053b97707cd149"
-  },
-  "src/nob/static/vendor/tradingview/bundles/export-data.06f5ad74fd75a83a5b96.js": {
-    "mtime": 1794701595.6780493,
-    "seen": 1795128917.271331,
-    "ast_hash": "18bf684f4ae90934d7835fed0f373b0c",
-    "semantic_hash": "18bf684f4ae90934d7835fed0f373b0c"
-  },
-  "src/nob/static/vendor/tradingview/bundles/fa.101.72bd74b7fdc5a07c178b.js": {
-    "mtime": 1794701595.67824,
-    "seen": 1795128917.271332,
-    "ast_hash": "a72ed5cdce64fde33589c30f1ee445e0",
-    "semantic_hash": "a72ed5cdce64fde33589c30f1ee445e0"
-  },
-  "src/nob/static/vendor/tradingview/bundles/fa.1184.c5f17f9f42004072d84f.js": {
-    "mtime": 1794701595.6784146,
-    "seen": 1795128917.271332,
-    "ast_hash": "bc4eaf2ae06113f4c2d13e167f16b562",
-    "semantic_hash": "bc4eaf2ae06113f4c2d13e167f16b562"
-  },
-  "src/nob/static/vendor/tradingview/bundles/fa.1595.4e8ee1f5341933dc2165.js": {
-    "mtime": 1794701595.6785452,
-    "seen": 1795128917.2713332,
-    "ast_hash": "2887c3329e81617b07f89b6e678d96c5",
-    "semantic_hash": "2887c3329e81617b07f89b6e678d96c5"
-  },
-  "src/nob/static/vendor/tradingview/bundles/fa.1962.663fd5f1898f9edbcd25.js": {
-    "mtime": 1794701595.6786594,
-    "seen": 1795128917.2713358,
-    "ast_hash": "2b917f5a11625b119ac2ef35278b6d85",
-    "semantic_hash": "2b917f5a11625b119ac2ef35278b6d85"
-  },
-  "src/nob/static/vendor/tradingview/bundles/fa.2238.115385d01d9d309f8373.js": {
-    "mtime": 1794701595.67876,
-    "seen": 1795128917.271337,
-    "ast_hash": "971c5c3f40cc76668e3c42133a160634",
-    "semantic_hash": "971c5c3f40cc76668e3c42133a160634"
-  },
-  "src/nob/static/vendor/tradingview/bundles/fa.2257.8a5740e6ce979613f4b1.js": {
-    "mtime": 1794701595.678873,
-    "seen": 1795128917.271338,
-    "ast_hash": "f03456fcab6d9a0a6b05400cf839b698",
-    "semantic_hash": "f03456fcab6d9a0a6b05400cf839b698"
-  },
-  "src/nob/static/vendor/tradingview/bundles/fa.2312.a9353e46c20c3019a091.js": {
-    "mtime": 1794701595.679172,
-    "seen": 1795128917.271338,
-    "ast_hash": "06b38ab4481dfaa55e23fd9fb6cc981c",
-    "semantic_hash": "06b38ab4481dfaa55e23fd9fb6cc981c"
-  },
-  "src/nob/static/vendor/tradingview/bundles/fa.2364.ca2fb98290b9af9edd4c.js": {
-    "mtime": 1794701595.679367,
-    "seen": 1795128917.271339,
-    "ast_hash": "862b81fc6b2a071c7e52b4647f80d0c7",
-    "semantic_hash": "862b81fc6b2a071c7e52b4647f80d0c7"
-  },
-  "src/nob/static/vendor/tradingview/bundles/fa.2530.141b9b02516d03268ee2.js": {
-    "mtime": 1794701595.6795247,
-    "seen": 1795128917.271339,
-    "ast_hash": "2e2b2d898e611d8a4bf21d7305abd614",
-    "semantic_hash": "2e2b2d898e611d8a4bf21d7305abd614"
-  },
-  "src/nob/static/vendor/tradingview/bundles/fa.2646.0e5c56264dcb2375a006.js": {
-    "mtime": 1794701595.6797183,
-    "seen": 1795128917.2713401,
-    "ast_hash": "95b705b01bbbf5cf34040f86c83ef7a3",
-    "semantic_hash": "95b705b01bbbf5cf34040f86c83ef7a3"
-  },
-  "src/nob/static/vendor/tradingview/bundles/fa.2831.7b64dd9e84577cc11ab5.js": {
-    "mtime": 1794701595.6800609,
-    "seen": 1795128917.271341,
-    "ast_hash": "0c61372e5819b67a46f185df67f684cd",
-    "semantic_hash": "0c61372e5819b67a46f185df67f684cd"
-  },
-  "src/nob/static/vendor/tradingview/bundles/fa.2870.65ad39b5928539d29f33.js": {
-    "mtime": 1794701595.680349,
-    "seen": 1795128917.271341,
-    "ast_hash": "da45334560f14143ac1851569537cae0",
-    "semantic_hash": "da45334560f14143ac1851569537cae0"
-  },
-  "src/nob/static/vendor/tradingview/bundles/fa.359.950cbed0e812beac44d9.js": {
-    "mtime": 1794701595.6805766,
-    "seen": 1795128917.271342,
-    "ast_hash": "80f90ce0f3fa67526c2c22b2acf14411",
-    "semantic_hash": "80f90ce0f3fa67526c2c22b2acf14411"
-  },
-  "src/nob/static/vendor/tradingview/bundles/fa.3796.785de1d1030dd5d4aa3e.js": {
-    "mtime": 1794701595.680689,
-    "seen": 1795128917.271342,
-    "ast_hash": "2999332ce19e8ca01d54633efac17bc8",
-    "semantic_hash": "2999332ce19e8ca01d54633efac17bc8"
-  },
-  "src/nob/static/vendor/tradingview/bundles/fa.4040.ba1136e07b4e1fe8feea.js": {
-    "mtime": 1794701595.6808143,
-    "seen": 1795128917.271343,
-    "ast_hash": "f230b6e1e4f543ab7b8a915af261b6ac",
-    "semantic_hash": "f230b6e1e4f543ab7b8a915af261b6ac"
-  },
-  "src/nob/static/vendor/tradingview/bundles/fa.4109.9fc6a921b69b97da31b8.js": {
-    "mtime": 1794701595.680934,
-    "seen": 1795128917.271343,
-    "ast_hash": "e50f75bf688ef1ff9f46e220ba3e60d1",
-    "semantic_hash": "e50f75bf688ef1ff9f46e220ba3e60d1"
-  },
-  "src/nob/static/vendor/tradingview/bundles/fa.4166.f8388b9e8fd545e22535.js": {
-    "mtime": 1794701595.6811562,
-    "seen": 1795128917.2713442,
-    "ast_hash": "5e0caf05017962070efc69783e29e572",
-    "semantic_hash": "5e0caf05017962070efc69783e29e572"
-  },
-  "src/nob/static/vendor/tradingview/bundles/fa.4703.3516cef20b4eaac928c6.js": {
-    "mtime": 1794701595.6816514,
-    "seen": 1795128917.271345,
-    "ast_hash": "73f565c5bff7f8bb913b97cf515a1356",
-    "semantic_hash": "73f565c5bff7f8bb913b97cf515a1356"
-  },
-  "src/nob/static/vendor/tradingview/bundles/fa.5683.466462f4d6271f8d13c4.js": {
-    "mtime": 1794701595.6821098,
-    "seen": 1795128917.271345,
-    "ast_hash": "8999a82652fd48c624ad6d90a4838b68",
-    "semantic_hash": "8999a82652fd48c624ad6d90a4838b68"
-  },
-  "src/nob/static/vendor/tradingview/bundles/fa.5757.bd43099c3855492254a0.js": {
-    "mtime": 1794701595.6838531,
-    "seen": 1795128917.2713459,
-    "ast_hash": "6de7a627dd2de8ac9b48d48d9d00d56b",
-    "semantic_hash": "6de7a627dd2de8ac9b48d48d9d00d56b"
-  },
-  "src/nob/static/vendor/tradingview/bundles/fa.6150.6e505059a4769c317b3d.js": {
-    "mtime": 1794701595.6843545,
-    "seen": 1795128917.2713459,
-    "ast_hash": "ca7d588f008b50819adf93b9ad95e5ec",
-    "semantic_hash": "ca7d588f008b50819adf93b9ad95e5ec"
-  },
-  "src/nob/static/vendor/tradingview/bundles/fa.6302.093ac5958c9add03ba99.js": {
-    "mtime": 1794701595.6845794,
-    "seen": 1795128917.271347,
-    "ast_hash": "dc2969690e845c6e7dc1786b56c17383",
-    "semantic_hash": "dc2969690e845c6e7dc1786b56c17383"
-  },
-  "src/nob/static/vendor/tradingview/bundles/fa.6342.c27e9d39485768c198f1.js": {
-    "mtime": 1794701595.6848705,
-    "seen": 1795128917.271347,
-    "ast_hash": "43f68bafcbad575a740839d63a5af0a3",
-    "semantic_hash": "43f68bafcbad575a740839d63a5af0a3"
-  },
-  "src/nob/static/vendor/tradingview/bundles/fa.6703.b71c9c2bcb964acc4d35.js": {
-    "mtime": 1794701595.6851103,
-    "seen": 1795128917.271348,
-    "ast_hash": "0d40a6153fec2c67f4cb4ef3a2100f98",
-    "semantic_hash": "0d40a6153fec2c67f4cb4ef3a2100f98"
-  },
-  "src/nob/static/vendor/tradingview/bundles/fa.6778.2272d2145f9d59a3f912.js": {
-    "mtime": 1794701595.6852317,
-    "seen": 1795128917.271348,
-    "ast_hash": "2c2de72acfdbefd9cc98342caf47640a",
-    "semantic_hash": "2c2de72acfdbefd9cc98342caf47640a"
-  },
-  "src/nob/static/vendor/tradingview/bundles/fa.6822.cf7a18b60df26a835ea8.js": {
-    "mtime": 1794701595.68536,
-    "seen": 1795128917.271349,
-    "ast_hash": "432070c36e26bed62c42b8035ed1359d",
-    "semantic_hash": "432070c36e26bed62c42b8035ed1359d"
-  },
-  "src/nob/static/vendor/tradingview/bundles/fa.711.2177d12e315b6889d875.js": {
-    "mtime": 1794701595.6854877,
-    "seen": 1795128917.271349,
-    "ast_hash": "b439e576a0b35ce8b2d5b27c1f7a2a49",
-    "semantic_hash": "b439e576a0b35ce8b2d5b27c1f7a2a49"
-  },
-  "src/nob/static/vendor/tradingview/bundles/fa.7230.e56bc4f0aa99693293b7.js": {
-    "mtime": 1794701595.6856315,
-    "seen": 1795128917.27135,
-    "ast_hash": "e3b6724108f12bafeffca749c1f751f3",
-    "semantic_hash": "e3b6724108f12bafeffca749c1f751f3"
-  },
-  "src/nob/static/vendor/tradingview/bundles/fa.8066.105eec5eae4e3b3b80c8.js": {
-    "mtime": 1794701595.6857662,
-    "seen": 1795128917.271351,
-    "ast_hash": "e7dc75da8d1cd1d04f42b922284c90ad",
-    "semantic_hash": "e7dc75da8d1cd1d04f42b922284c90ad"
-  },
-  "src/nob/static/vendor/tradingview/bundles/fa.8370.ffb31a4ccb6eb8556720.js": {
-    "mtime": 1794701595.6858757,
-    "seen": 1795128917.271351,
-    "ast_hash": "00a33fdba75f51ea1c142fcc748f5794",
-    "semantic_hash": "00a33fdba75f51ea1c142fcc748f5794"
-  },
-  "src/nob/static/vendor/tradingview/bundles/fa.8622.3c29960f5935444d279e.js": {
-    "mtime": 1794701595.6861167,
-    "seen": 1795128917.271352,
-    "ast_hash": "aa4cb904c797df42369f5fb93f9678a5",
-    "semantic_hash": "aa4cb904c797df42369f5fb93f9678a5"
-  },
-  "src/nob/static/vendor/tradingview/bundles/fa.877.0ee92395c6661b759971.js": {
-    "mtime": 1794701595.6863248,
-    "seen": 1795128917.271352,
-    "ast_hash": "c724e59a4bf6a8abace7168f32f751a7",
-    "semantic_hash": "c724e59a4bf6a8abace7168f32f751a7"
-  },
-  "src/nob/static/vendor/tradingview/bundles/fa.9093.58448b805fe08d2b8434.js": {
-    "mtime": 1794701595.6864254,
-    "seen": 1795128917.271353,
-    "ast_hash": "b5a1a56c4158a20ebb4046f2913a1e7a",
-    "semantic_hash": "b5a1a56c4158a20ebb4046f2913a1e7a"
-  },
-  "src/nob/static/vendor/tradingview/bundles/fa.9321.cd0fba64286aeb8f33e9.js": {
-    "mtime": 1794701595.6867256,
-    "seen": 1795128917.2713542,
-    "ast_hash": "1bccb099fc3a5a45db053b97707cd149",
-    "semantic_hash": "1bccb099fc3a5a45db053b97707cd149"
-  },
-  "src/nob/static/vendor/tradingview/bundles/favorite-drawings-api.ec1abe78f54ce91e86da.js": {
-    "mtime": 1794701595.6868436,
-    "seen": 1795128917.2713542,
-    "ast_hash": "63012d91f8df054f4fb7223e829e9cfb",
-    "semantic_hash": "63012d91f8df054f4fb7223e829e9cfb"
-  },
-  "src/nob/static/vendor/tradingview/bundles/favorite-indicators.8b28c68ab9b75bd4cffc.js": {
-    "mtime": 1794701595.6869712,
-    "seen": 1795128917.271355,
-    "ast_hash": "9e1e8ea499963fc8fd4bf508193c9438",
-    "semantic_hash": "9e1e8ea499963fc8fd4bf508193c9438"
-  },
-  "src/nob/static/vendor/tradingview/bundles/floating-toolbars.9129b5550e965c345e37.js": {
-    "mtime": 1794701595.68723,
-    "seen": 1795128917.271355,
-    "ast_hash": "cd1d384aa31d07bbd7b7e15b5b9aefc8",
-    "semantic_hash": "cd1d384aa31d07bbd7b7e15b5b9aefc8"
-  },
-  "src/nob/static/vendor/tradingview/bundles/full-tooltips-popup.2853535b8ae33d3d848c.js": {
-    "mtime": 1794701595.6873543,
-    "seen": 1795128917.2713559,
-    "ast_hash": "c25049fa0d815681fe2caaf2d5df6cf3",
-    "semantic_hash": "c25049fa0d815681fe2caaf2d5df6cf3"
-  },
-  "src/nob/static/vendor/tradingview/bundles/general-chart-properties-dialog.ae6ea6ac9aefb8257b95.js": {
-    "mtime": 1794701595.6874857,
-    "seen": 1795128917.2713559,
-    "ast_hash": "c3c8efc12135c0b611b120231476c55c",
-    "semantic_hash": "c3c8efc12135c0b611b120231476c55c"
-  },
-  "src/nob/static/vendor/tradingview/bundles/general-property-page.e2157981df25e8464d9e.js": {
-    "mtime": 1794701595.6876538,
-    "seen": 1795128917.2713568,
-    "ast_hash": "da0bc485275755c4e8bf5d31523fe662",
-    "semantic_hash": "da0bc485275755c4e8bf5d31523fe662"
-  },
-  "src/nob/static/vendor/tradingview/bundles/get-error-card.60b010a94494ccdc034c.js": {
-    "mtime": 1794701595.6878304,
-    "seen": 1795128917.2713568,
-    "ast_hash": "d89818047813ee0c3ac9c941cd86a0c8",
-    "semantic_hash": "d89818047813ee0c3ac9c941cd86a0c8"
-  },
-  "src/nob/static/vendor/tradingview/bundles/global-search-dialog.9bd6aafc7993d2f56125.js": {
-    "mtime": 1794701595.6881945,
-    "seen": 1795128917.271358,
-    "ast_hash": "ed4e1996c9f012d4df18c645593fcfc7",
-    "semantic_hash": "ed4e1996c9f012d4df18c645593fcfc7"
-  },
-  "src/nob/static/vendor/tradingview/bundles/go-to-date-dialog-impl.a894bb4185dce1f7f39e.js": {
-    "mtime": 1794701595.6884975,
-    "seen": 1795128917.271359,
-    "ast_hash": "7418cfc6aac92a0acfe14df8607b2cae",
-    "semantic_hash": "7418cfc6aac92a0acfe14df8607b2cae"
-  },
-  "src/nob/static/vendor/tradingview/bundles/hammerjs.6e30e0c48af40bf2f6c0.js": {
-    "mtime": 1794701595.6886008,
-    "seen": 1795128917.271361,
-    "ast_hash": "99277baa3e7fdae781a4fa1ce7c05bef",
-    "semantic_hash": "99277baa3e7fdae781a4fa1ce7c05bef"
-  },
-  "src/nob/static/vendor/tradingview/bundles/header-toolbar.509c33f5e1dd207b3f2a.js": {
-    "mtime": 1794701595.688748,
-    "seen": 1795128917.271361,
-    "ast_hash": "5767f5f1ef76aa2edbbb44ac64df46f8",
-    "semantic_hash": "5767f5f1ef76aa2edbbb44ac64df46f8"
-  },
-  "src/nob/static/vendor/tradingview/bundles/ichart-storage.1144e5a1b4f8503ee572.js": {
-    "mtime": 1794701595.6888566,
-    "seen": 1795128917.271362,
-    "ast_hash": "9a58f59cae33caa5b5ed13df9128d447",
-    "semantic_hash": "9a58f59cae33caa5b5ed13df9128d447"
-  },
-  "src/nob/static/vendor/tradingview/bundles/insert-image-dialog.40902cb87d5d3cbc92e8.js": {
-    "mtime": 1794701595.6890295,
-    "seen": 1795128917.271362,
-    "ast_hash": "a1f34c706c558cbccb9eb44bda6bc670",
-    "semantic_hash": "a1f34c706c558cbccb9eb44bda6bc670"
-  },
-  "src/nob/static/vendor/tradingview/bundles/library.8fdacc60e5256d6fcc84.js": {
-    "mtime": 1794701595.6962402,
-    "seen": 1795128917.271363,
-    "ast_hash": "3a7b7cac9a93f3688982a70f213f8b87",
-    "semantic_hash": "3a7b7cac9a93f3688982a70f213f8b87"
-  },
-  "src/nob/static/vendor/tradingview/bundles/line-tools-icons.85c5e32f730963cc2d77.js": {
-    "mtime": 1794701595.6971056,
-    "seen": 1795128917.271363,
-    "ast_hash": "b926bce983f65f3e632a91061725950a",
-    "semantic_hash": "b926bce983f65f3e632a91061725950a"
-  },
-  "src/nob/static/vendor/tradingview/bundles/line-tools-synchronizer.a3d57451eacd53dd89da.js": {
-    "mtime": 1794701595.6972446,
-    "seen": 1795128917.2713642,
-    "ast_hash": "ffc18a357e85dc14335fcf19eece6c16",
-    "semantic_hash": "ffc18a357e85dc14335fcf19eece6c16"
-  },
-  "src/nob/static/vendor/tradingview/bundles/load-chart-dialog.3891627d68b6d6053f24.js": {
-    "mtime": 1794701595.6974993,
-    "seen": 1795128917.2713652,
-    "ast_hash": "f171e00d32b2a75f3c9c7ad638b0979e",
-    "semantic_hash": "f171e00d32b2a75f3c9c7ad638b0979e"
-  },
-  "src/nob/static/vendor/tradingview/bundles/lollipop-tooltip-renderer.ee88da6f546931c62cb9.js": {
-    "mtime": 1794701595.6976933,
-    "seen": 1795128917.2713652,
-    "ast_hash": "0bd574e4b4a05638eaf2ebd9906edbdd",
-    "semantic_hash": "0bd574e4b4a05638eaf2ebd9906edbdd"
-  },
-  "src/nob/static/vendor/tradingview/bundles/lt-icons-atlas.3e361230833342ac97b9.js": {
-    "mtime": 1794701595.7002661,
-    "seen": 1795128917.271366,
-    "ast_hash": "930332dc0bedf04bd303c4072ca6e7e9",
-    "semantic_hash": "930332dc0bedf04bd303c4072ca6e7e9"
-  },
-  "src/nob/static/vendor/tradingview/bundles/lt-pane-views.57a165725f4ab83a49ed.js": {
-    "mtime": 1794701595.701773,
-    "seen": 1795128917.271366,
-    "ast_hash": "05621914b531ca71e330dca12b0f373e",
-    "semantic_hash": "05621914b531ca71e330dca12b0f373e"
-  },
-  "src/nob/static/vendor/tradingview/bundles/lt-property-pages-with-definitions.e411878d6fc0600c61b8.js": {
-    "mtime": 1794701595.7022254,
-    "seen": 1795128917.2713668,
-    "ast_hash": "4abd991392eaa97b0ba0a0c0dc6cd9a7",
-    "semantic_hash": "4abd991392eaa97b0ba0a0c0dc6cd9a7"
-  },
-  "src/nob/static/vendor/tradingview/bundles/lt-stickers-atlas.94f0c0b09e739934e586.js": {
-    "mtime": 1794701595.7051804,
-    "seen": 1795128917.2713668,
-    "ast_hash": "deb9a549608901b1b6224abd7837f8f0",
-    "semantic_hash": "deb9a549608901b1b6224abd7837f8f0"
-  },
-  "src/nob/static/vendor/tradingview/bundles/manage-drawings-dialog.8170358663062d76c1d5.js": {
-    "mtime": 1794701595.7059944,
-    "seen": 1795128917.271368,
-    "ast_hash": "a90b1b255920657a16cfc1b8cfd5d27c",
-    "semantic_hash": "a90b1b255920657a16cfc1b8cfd5d27c"
-  },
-  "src/nob/static/vendor/tradingview/bundles/new-confirm-inputs-dialog.75020f7929f7774b9c4e.js": {
-    "mtime": 1794701595.706195,
-    "seen": 1795128917.271368,
-    "ast_hash": "1e11215f217c9ca695fe206fb2ee91ef",
-    "semantic_hash": "1e11215f217c9ca695fe206fb2ee91ef"
-  },
-  "src/nob/static/vendor/tradingview/bundles/new-edit-object-dialog.cb5864f96bd63e9d2148.js": {
-    "mtime": 1794701595.7067356,
-    "seen": 1795128917.271369,
-    "ast_hash": "82c9d83b9e424d6e819ce1f8592b7269",
-    "semantic_hash": "82c9d83b9e424d6e819ce1f8592b7269"
-  },
-  "src/nob/static/vendor/tradingview/bundles/object-tree-dialog.2447088c66b4ccee845f.js": {
-    "mtime": 1794701595.7080457,
-    "seen": 1795128917.271369,
-    "ast_hash": "c4deca326fa809b7afce2cd148c874ce",
-    "semantic_hash": "c4deca326fa809b7afce2cd148c874ce"
-  },
-  "src/nob/static/vendor/tradingview/bundles/restricted-toolset.0d05314ef639092abfd8.js": {
-    "mtime": 1794701595.708467,
-    "seen": 1795128917.27137,
-    "ast_hash": "c368e405c10c50f75b492b9a0e14664f",
-    "semantic_hash": "c368e405c10c50f75b492b9a0e14664f"
-  },
-  "src/nob/static/vendor/tradingview/bundles/runtime.0c59f90a8699f12ff40f.js": {
-    "mtime": 1794701595.7086992,
-    "seen": 1795128917.27137,
-    "ast_hash": "9e00f1697cf0fd8e9b2b6b09fd30351d",
-    "semantic_hash": "9e00f1697cf0fd8e9b2b6b09fd30351d"
-  },
-  "src/nob/static/vendor/tradingview/bundles/series-icons-map.8c0383b52d89ca46a1b8.js": {
-    "mtime": 1794701595.709188,
-    "seen": 1795128917.2713711,
-    "ast_hash": "e09054482903684fbf5d7ec86a5af316",
-    "semantic_hash": "e09054482903684fbf5d7ec86a5af316"
-  },
-  "src/nob/static/vendor/tradingview/bundles/series-pane-views.3ef313cda7877ec9c336.js": {
-    "mtime": 1794701595.7093616,
-    "seen": 1795128917.271372,
-    "ast_hash": "d944af48fbe28567535043c23c365241",
-    "semantic_hash": "d944af48fbe28567535043c23c365241"
-  },
-  "src/nob/static/vendor/tradingview/bundles/share-chart-to-social-utils.e6a25f4006607ca48421.js": {
-    "mtime": 1794701595.7094862,
-    "seen": 1795128917.271372,
-    "ast_hash": "45960d443f34ee9699ebfb15f56bad40",
-    "semantic_hash": "45960d443f34ee9699ebfb15f56bad40"
-  },
-  "src/nob/static/vendor/tradingview/bundles/show-theme-save-dialog.2efb90ef53bd11686325.js": {
-    "mtime": 1794701595.709585,
-    "seen": 1795128917.271373,
-    "ast_hash": "143fffc9d1891e7794e2afd5b0ee4484",
-    "semantic_hash": "143fffc9d1891e7794e2afd5b0ee4484"
-  },
-  "src/nob/static/vendor/tradingview/bundles/simple-dialog.caf1cb0bd206c046c24b.js": {
-    "mtime": 1794701595.7097332,
-    "seen": 1795128917.271373,
-    "ast_hash": "3ff5d8cad12f5fea4f746aee434494ed",
-    "semantic_hash": "3ff5d8cad12f5fea4f746aee434494ed"
-  },
-  "src/nob/static/vendor/tradingview/bundles/source-properties-editor.2d66a9b78a49ad9d13b0.js": {
-    "mtime": 1794701595.7098947,
-    "seen": 1795128917.271374,
-    "ast_hash": "b2b700c11c4a006ac88c0c6bccb9671e",
-    "semantic_hash": "b2b700c11c4a006ac88c0c6bccb9671e"
-  },
-  "src/nob/static/vendor/tradingview/bundles/studies.137042b318030eec091b.js": {
-    "mtime": 1794701595.710064,
-    "seen": 1795128917.271374,
-    "ast_hash": "772bf957319f975441c6782134922efb",
-    "semantic_hash": "772bf957319f975441c6782134922efb"
-  },
-  "src/nob/static/vendor/tradingview/bundles/study-inputs-pane-views.f5305fce3617de1a0299.js": {
-    "mtime": 1794701595.7102413,
-    "seen": 1795128917.2713752,
-    "ast_hash": "ce803ebb807fc6e0b1195250fb72b348",
-    "semantic_hash": "ce803ebb807fc6e0b1195250fb72b348"
-  },
-  "src/nob/static/vendor/tradingview/bundles/study-market.06053806bc00e9223e89.js": {
-    "mtime": 1794701595.7104197,
-    "seen": 1795128917.2713752,
-    "ast_hash": "59bfc79e14ad652fc8367fe6ae5df187",
-    "semantic_hash": "59bfc79e14ad652fc8367fe6ae5df187"
-  },
-  "src/nob/static/vendor/tradingview/bundles/study-pane-views.430ecb3d50d053b6e7fa.js": {
-    "mtime": 1794701595.7105494,
-    "seen": 1795128917.271376,
-    "ast_hash": "378018b2fe5140b556f8b1eaa79f19e5",
-    "semantic_hash": "378018b2fe5140b556f8b1eaa79f19e5"
-  },
-  "src/nob/static/vendor/tradingview/bundles/study-property-pages-with-definitions.2a9e8968482963bc5b1d.js": {
-    "mtime": 1794701595.710724,
-    "seen": 1795128917.2713768,
-    "ast_hash": "6aa990c2f307d82ca77f2ea751e9743f",
-    "semantic_hash": "6aa990c2f307d82ca77f2ea751e9743f"
-  },
-  "src/nob/static/vendor/tradingview/bundles/study-template-dialog.78491209cf586d0ba30d.js": {
-    "mtime": 1794701595.710865,
-    "seen": 1795128917.2713768,
-    "ast_hash": "297d31d867dd7b38965db1123319f423",
-    "semantic_hash": "297d31d867dd7b38965db1123319f423"
-  },
-  "src/nob/static/vendor/tradingview/bundles/symbol-info-dialog-impl.70ad638f4893ae2c4f86.js": {
-    "mtime": 1794701595.711032,
-    "seen": 1795128917.2713778,
-    "ast_hash": "01070f1805e9ff8031cf4d790df3a453",
-    "semantic_hash": "01070f1805e9ff8031cf4d790df3a453"
-  },
-  "src/nob/static/vendor/tradingview/bundles/symbol-search-dialog.c1573b04ce801649f4ce.js": {
-    "mtime": 1794701595.711134,
-    "seen": 1795128917.2713778,
-    "ast_hash": "a0616a8faa8e5eab4f081acb722acfa1",
-    "semantic_hash": "a0616a8faa8e5eab4f081acb722acfa1"
-  },
-  "src/nob/static/vendor/tradingview/bundles/take-chart-image-impl.d04906fb9a536ff5aedf.js": {
-    "mtime": 1794701595.711228,
-    "seen": 1795128917.271379,
-    "ast_hash": "7dac7f1b06c32e160229bd8b01ea1c1c",
-    "semantic_hash": "7dac7f1b06c32e160229bd8b01ea1c1c"
-  },
-  "src/nob/static/vendor/tradingview/bundles/user-defined-bars-marks-tooltip.77d8dc2f2d5b3ab9e50a.js": {
-    "mtime": 1794701595.711323,
-    "seen": 1795128917.271379,
-    "ast_hash": "d2621f97e8e3fa394abd5d6d5776bc0a",
-    "semantic_hash": "d2621f97e8e3fa394abd5d6d5776bc0a"
-  },
-  "src/nob/static/vendor/tradingview/charting_library.js": {
-    "mtime": 1794701595.711534,
-    "seen": 1795128917.27138,
-    "ast_hash": "7745a16c441ffebc023ccbbb657662a1",
-    "semantic_hash": "7745a16c441ffebc023ccbbb657662a1"
-  },
-  "src/nob/static/vendor/tradingview/charting_library.standalone.js": {
-    "mtime": 1794701595.7117646,
-    "seen": 1795128917.27138,
-    "ast_hash": "d1edcbf10929dc634384e2596edcfa31",
-    "semantic_hash": "d1edcbf10929dc634384e2596edcfa31"
+    "mtime": 1795476236.632177,
+    "seen": 1795476556.572721,
+    "ast_hash": "8a88649ac16f25dd5f9810734029810f",
+    "semantic_hash": "8a88649ac16f25dd5f9810734029810f"
   },
   "DECISIONS.md": {
-    "mtime": 1795128654.8316698,
-    "seen": 1795128917.271382,
-    "ast_hash": "619134ce498e3ef5c1174a6aae554695",
-    "semantic_hash": "619134ce498e3ef5c1174a6aae554695"
+    "mtime": 1795476221.8253038,
+    "seen": 1795476556.57272,
+    "ast_hash": "fbeec40be97cbda77d78e12c6431f04d",
+    "semantic_hash": "fbeec40be97cbda77d78e12c6431f04d"
   },
   "src/nob/time_utils.py": {
     "mtime": 1795131847.111438,
@@ -1260,9 +72,81 @@
     "semantic_hash": "8273600f088a34d66d58d33a5113ab21"
   },
   "src/nob/ws_bridge.py": {
-    "mtime": 1795188098.6889105,
-    "seen": 1795219539.790487,
-    "ast_hash": "7a2afb93cae6d314da435d277c79cbee",
-    "semantic_hash": "7a2afb93cae6d314da435d277c79cbee"
+    "mtime": 1795474638.3067179,
+    "seen": 1795476556.572714,
+    "ast_hash": "c82fb38c9bdd58ffa02012ee46c0db66",
+    "semantic_hash": "c82fb38c9bdd58ffa02012ee46c0db66"
+  },
+  "src/nob/static/js/api.js": {
+    "mtime": 1795475210.7659175,
+    "seen": 1795476556.572709,
+    "ast_hash": "ff37f94798925b9da0db6e2b13e5665c",
+    "semantic_hash": "ff37f94798925b9da0db6e2b13e5665c"
+  },
+  "src/nob/static/js/calculator.js": {
+    "mtime": 1795475219.9040406,
+    "seen": 1795476556.5727098,
+    "ast_hash": "ae4b1bd6c6f3fe9a204c1a3297e4bf41",
+    "semantic_hash": "ae4b1bd6c6f3fe9a204c1a3297e4bf41"
+  },
+  "src/nob/static/js/calendar.js": {
+    "mtime": 1795475217.3878288,
+    "seen": 1795476556.572711,
+    "ast_hash": "2fb721ba72bcd3e658b0902c3341877a",
+    "semantic_hash": "2fb721ba72bcd3e658b0902c3341877a"
+  },
+  "src/nob/static/js/utils.js": {
+    "mtime": 1795476167.835802,
+    "seen": 1795476556.572712,
+    "ast_hash": "e5deced22becba5421214b94376be791",
+    "semantic_hash": "e5deced22becba5421214b94376be791"
+  },
+  "src/nob/static/js/ws.js": {
+    "mtime": 1795475222.420759,
+    "seen": 1795476556.572712,
+    "ast_hash": "555e995e27d80eea6c2a71cc7dd13c99",
+    "semantic_hash": "555e995e27d80eea6c2a71cc7dd13c99"
+  },
+  "tests/conftest.py": {
+    "mtime": 1795475668.6550934,
+    "seen": 1795476556.572715,
+    "ast_hash": "46a92626d56e6021b7b2dfc8f6698154",
+    "semantic_hash": "46a92626d56e6021b7b2dfc8f6698154"
+  },
+  "tests/test_db.py": {
+    "mtime": 1795475674.325775,
+    "seen": 1795476556.572716,
+    "ast_hash": "c872f28f02f587703751402ceddfe754",
+    "semantic_hash": "c872f28f02f587703751402ceddfe754"
+  },
+  "tests/test_frontend_integrity.py": {
+    "mtime": 1795475725.2567673,
+    "seen": 1795476556.572716,
+    "ast_hash": "948ac302f55501aa73d7dd6d9449ee52",
+    "semantic_hash": "948ac302f55501aa73d7dd6d9449ee52"
+  },
+  "tests/test_nobitex_client.py": {
+    "mtime": 1795475677.199548,
+    "seen": 1795476556.572717,
+    "ast_hash": "0bc7f067041ffea86ee77560a0589792",
+    "semantic_hash": "0bc7f067041ffea86ee77560a0589792"
+  },
+  "tests/test_pnl.py": {
+    "mtime": 1795475671.6049895,
+    "seen": 1795476556.5727181,
+    "ast_hash": "37e62af8504804afb5ea63b74b17bc2b",
+    "semantic_hash": "37e62af8504804afb5ea63b74b17bc2b"
+  },
+  "tests/test_server_api.py": {
+    "mtime": 1795475775.7026694,
+    "seen": 1795476556.572719,
+    "ast_hash": "26d03e9630da5e5648bc9d55c0aa6130",
+    "semantic_hash": "26d03e9630da5e5648bc9d55c0aa6130"
+  },
+  "tests/test_ws_bridge.py": {
+    "mtime": 1795475720.3504543,
+    "seen": 1795476556.572719,
+    "ast_hash": "c3130460eaaa76615ecc61e1381d9ea2",
+    "semantic_hash": "c3130460eaaa76615ecc61e1381d9ea2"
   }
 }

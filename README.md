@@ -27,14 +27,14 @@ Designed from the ground up to be **100% offline-ready and private**: your tradi
 ## 🌟 Key Features
 
 ### 1. 📊 Portfolio & Asset Overview
-- **Real-Time Valuation:** Aggregates spot balances and active margin collateral with live Nobitex market prices.
-- **True Net PnL:** All profit/loss numbers strictly deduct buy/sell transaction fees, margin opening/closing/renewal fees, and Nobitex pool profit share (سهم استخر مشارکت).
+- **Real-Time Valuation (`Decimal` Precision):** Aggregates spot balances (`USDT`, `DAI`, `RLS`/`IRT`, and crypto holdings) and active margin collateral with live Nobitex market prices via a local WebSocket bridge (`ws://127.0.0.1:8080/ws`, with automatic REST fallback when offline).
+- **True Net PnL & 180-Day WAC Integrity:** All profit/loss calculations use exact `Decimal` arithmetic, deduct fees/renewal fees/pool share without double-counting, replay confirmed crypto withdrawals in WAC, and cleanly ignore unmatched sells predating Nobitex's 180-day trade history window.
 - **Dual Currency:** Displays values seamlessly in Tether (USD) and Iranian Toman (IRT).
-- **Spot Asset Details Modal:** Click any spot asset row to inspect an in-depth breakdown modal with Weighted Average Cost (WAC), total bought/sold volume, realized/unrealized PnL, embedded open orders, and a complete 7-column transaction ledger.
+- **Spot Asset Details Modal:** Click any spot asset row to inspect an in-depth breakdown modal with Weighted Average Cost (WAC), total bought/sold volume, realized/unrealized PnL, embedded open orders, and a spot-isolated 7-column transaction ledger.
 
 ### 2. 📉 Offline TradingView Advanced Charting Engine
 - **Professional Analytics:** Powered by a 100% offline-bundled **TradingView Advanced Charting Library (v28)** with 100+ technical indicators, drawing tools, and customizable styles.
-- **Multi-Timeframe Resolutions:** Seamlessly switch between `15m`, `30m`, `1h`, `4h`, `1D`, and `1W` candles with server-side caching and aggregation.
+- **Multi-Timeframe & Live Candles:** Seamlessly switch between `15m`, `30m`, `1h`, `4h`, `1D`, and `1W` candles with bounded server-side caching, paginated history, and live candle streaming over the local `/ws` bridge.
 - **URL & State Synchronization:** Chart symbols and timeframes are synchronized bi-directionally with the browser address bar (`?tab=chart&symbol=USOONUSDT&tf=1D`) with isolated `localStorage` to avoid stale symbol overrides.
 - **Dual Calendar on Timeline:** Displays Jalali (Solar Hijri) dates on the chart timeline in Persian mode and Gregorian in English mode.
 
@@ -51,18 +51,19 @@ Designed from the ground up to be **100% offline-ready and private**: your tradi
 - **Risk Metrics:** Automatically calculates Maximum Drawdown (MDD), Peak Account Equity, and Alpha vs BTC.
 - **Dynamic Date Filtering:** Presets for `All Time`, `30D`, `90D`, `YTD`, and `Custom` date ranges, fully persistent across page refreshes via URL parameters.
 
-### 5. ⚡ Liquidation Risk Radar
-- **Live Safety Margin Meter:** Continuous monitoring of liquidation proximity for every active leveraged position:
+### 5. ⚡ Liquidation Risk Radar & Margin Controls
+- **Live Safety Margin Meter:** Real-time monitoring of liquidation proximity using live `mark` prices for every active leveraged position:
   $$\text{Liquidation Distance \%} = \frac{|\text{Mark Price} - \text{Liquidation Price}|}{\text{Mark Price}} \times 100$$
 - **Color-Coded Risk Tiers:** 
   - 🟢 **Safe:** Distance > 20%
   - 🟡 **Caution:** Distance between 10% and 20%
   - 🔴 **High Danger:** Distance < 10% (with pulsing visual alert)
+- **Quick Margin Actions:** Confirmation-gated **Add/Edit Collateral** and **Close Position** (`market`, `limit`, `stop_limit`, `stop_market`) directly from the Risk Radar and open positions table (requires `TRADE` API permission).
 - **Offline Audio Alert:** Web Audio API sound chime when risk levels enter critical thresholds (toggleable, zero external audio assets).
 
 ### 6. 📋 Nobitex Open Orders Management
-- **Live Open Orders Tab:** View and filter all active Spot and Margin orders by market and side (Buy/Sell).
-- **In-App Order Cancellation:** Cancel open limit or stop orders directly from the dashboard UI with optimistic updates (requires Trading API permission).
+- **Live Open Orders Tab:** View and filter all active Spot and Margin orders (`Active`, `New`, `Inactive`) by market and side (Buy/Sell) with live WebSocket updates.
+- **Single & Bulk Cancellation:** Cancel individual open orders or bulk-cancel filtered orders (`/api/orders/cancel-old`) via confirmation modals (requires `TRADE` API permission).
 - **Embedded Asset Orders:** View active open orders for any specific asset inside its Asset Details modal.
 
 ### 7. 🧮 Position Size & Risk Calculator
@@ -118,7 +119,7 @@ API=your_nobitex_api_key_here
 SECRET=your_nobitex_secret_key_here
 ```
 
-> 🔒 **Security Best Practice:** Generate a **Read-Only** API key from your Nobitex account settings for viewing portfolio data. If you wish to use the *Cancel Order* feature, grant the key Trade permission.
+> 🔒 **Security Best Practice:** Generate a **Read-Only** API key from your Nobitex account settings for viewing portfolio data. If you wish to use interactive actions (*Cancel / Bulk-Cancel Orders*, *Edit Collateral*, or *Close Position*), grant the key `TRADE` permission.
 
 ### 3. Run the Dashboard
 
@@ -137,6 +138,15 @@ Open your browser and navigate to:
 http://127.0.0.1:8080
 ```
 
+### 4. Run Automated Tests & Linting
+
+Install dev dependencies (`pytest`, `httpx`, `ruff`) and run the full suite:
+```bash
+uv sync --extra dev
+uv run pytest -v
+uv run ruff check src/nob tests
+```
+
 ---
 
 ## 🏛️ Architectural & Product Decisions
@@ -153,8 +163,8 @@ Every significant technical decision (such as True Net PnL math, TradingView off
 | :--- | :--- |
 | **Data Storage** | All trade records, cached market prices, and personal journal notes are stored strictly in local SQLite (`data/portfolio.db`). |
 | **Git Protection** | Pre-configured [.gitignore](.gitignore) prevents `.env`, `portfolio.db`, logs, or private credentials from ever being staged or committed. |
-| **Zero External CDNs** | Zero external analytics, tracking scripts, or CDN dependencies. Frontend assets (Vue 3, Chart.js, Tailwind CSS, TradingView Advanced v28) and fonts are bundled 100% locally. |
-| **API Safety** | Operates safely with read-only credentials. Never initiates withdrawals or unsanctioned orders. |
+| **Zero External CDNs** | Zero external analytics, tracking scripts, or CDN dependencies. Frontend assets (Vue 3, Chart.js, Tailwind CSS, TradingView Advanced v28) and fonts are bundled 100% locally, and the browser connects only to the local `/ws` proxy. |
+| **API Safety** | Enforces localhost `TrustedHostMiddleware`, WebSocket CSWSH `Origin` validation, `confirm_all` guardrails on bulk cancellations, fail-fast `403` with zero retries on read-only keys, and closed SQLite connection lifecycle. |
 
 ---
 
@@ -170,15 +180,20 @@ nob-api/
 │   └── GRAPH_REPORT.md
 ├── src/
 │   └── nob/
-│       ├── db.py            # SQLite schema, migrations, Net Amount & PnL queries
-│       ├── nobitex_client.py# Nobitex REST API client with retry & rate limiting
-│       ├── pnl.py           # Portfolio valuation, calendar, and equity curve engine
-│       ├── server.py        # FastAPI server, orders API, and TradingView datafeed
-│       ├── export_csv.py    # CSV export utility with UTF-8 BOM
-│       └── static/          # Single-Page Application (HTML5, Tailwind, Vue 3, i18n, TV)
-│           ├── i18n.js      # English & Persian translations
+│       ├── db.py            # SQLite WAL schema, migrations, cashflows, Net Amount & PnL queries
+│       ├── nobitex_client.py# Nobitex v2 REST client (Ed25519, rate limiter, backOff retry, fromId sync)
+│       ├── pnl.py           # Decimal portfolio valuation, WAC replay, calendar & equity curve engine
+│       ├── server.py        # FastAPI server, local /ws endpoint, orders/margin API & TradingView datafeed
+│       ├── ws_bridge.py     # Backend Centrifugo WebSocket client -> local /ws broadcaster
+│       ├── time_utils.py    # Strict Iran Standard Time (IRST, UTC+03:30, no DST) helpers
+│       └── static/          # Zero-build offline SPA (HTML5, Tailwind, Vue 3, i18n, TV v28)
+│           ├── index.html   # Vue 3 layout & interactive templates
+│           ├── i18n.js      # English & Persian translations + fixed UTC+03:30 formatter
+│           ├── js/          # Modular native ES modules (api, utils, calendar, calculator, ws)
 │           └── vendor/      # 100% local offline libraries (TradingView v28, Vue, Chart.js)
-├── DECISIONS.md             # Architectural Decision Records (ADR log)
+├── tests/                   # Automated pytest suite (PnL ADRs, SQLite, client, WS, security, UI)
+├── DECISIONS.md             # Architectural Decision Records (ADR-001 through ADR-015)
+├── .graphifyignore          # Excludes minified vendor/assets from Graphify knowledge graph
 ├── .env.example             # Safe template for credentials
 ├── .gitignore               # Strict exclusion rules for open-source safety
 ├── LICENSE                  # MIT License

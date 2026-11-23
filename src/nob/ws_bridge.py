@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Set, Tuple
 
-from nob.db import upsert_market_prices, upsert_orders, upsert_trades
+from nob.db import _safe_float, upsert_market_prices, upsert_orders, upsert_trades
 from nob.nobitex_client import NobitexAPIError, NobitexAuthError, NobitexClient
 from nob.time_utils import now_irst
+
+logger = logging.getLogger(__name__)
 
 try:
     import websockets
@@ -19,6 +23,9 @@ except ImportError:
 NOBITEX_WS_URL = "wss://ws.nobitex.ir/connection/websocket"
 JWT_REFRESH_INTERVAL_SEC = 1000.0  # Official JWT TTL is 1200s
 DB_PRICE_FLUSH_INTERVAL_SEC = 15.0
+MAX_CANDLE_SUBS_PER_CLIENT = 20
+LOCAL_WS_SEND_TIMEOUT_SEC = 2.0
+_WS_SYMBOL_RE = re.compile(r"^[A-Z0-9_]{2,24}$")
 
 VALID_WS_CANDLE_RESOLUTIONS = {
     "1",
@@ -43,7 +50,7 @@ def normalize_ws_candle_target(symbol: str, resolution: str) -> Optional[Tuple[s
     Returns (SYMBOL, RESOLUTION) or None if the resolution is unsupported on WS (e.g. '1W').
     """
     clean_sym = str(symbol or "").replace("-", "").replace("/", "").strip().upper()
-    if not clean_sym:
+    if not clean_sym or not _WS_SYMBOL_RE.match(clean_sym):
         return None
 
     res_raw = str(resolution or "").strip().upper()
@@ -98,15 +105,6 @@ def _ms_to_utc_iso(ms_val: Any) -> str:
         return datetime.fromtimestamp(num, tz=timezone.utc).isoformat()
     except (ValueError, TypeError, OSError):
         return datetime.now(tz=timezone.utc).isoformat()
-
-
-def _safe_float(val: Any, default: float = 0.0) -> float:
-    if val is None:
-        return default
-    try:
-        return float(val)
-    except (ValueError, TypeError):
-        return default
 
 
 def normalize_ws_order_event(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -249,6 +247,7 @@ class NobitexWSBridge:
 
         self._running = False
         self._task: Optional[asyncio.Task] = None
+        self._flush_task: Optional[asyncio.Task] = None
         self._upstream_ws: Any = None
         self._upstream_connected = False
         self._authenticated = False
@@ -257,8 +256,7 @@ class NobitexWSBridge:
         self._last_message_at: Optional[str] = None
         self._last_error: Optional[str] = None
 
-        # In-memory live price cache & throttled SQLite flush buffer
-        self.latest_prices: Dict[str, Dict[str, Any]] = {}
+        # Throttled SQLite flush buffer for live prices
         self._dirty_prices: Dict[str, Dict[str, Any]] = {}
         self._last_db_flush = 0.0
 
@@ -291,9 +289,10 @@ class NobitexWSBridge:
         self._running = True
         if websockets is None:
             self._last_error = "websockets package not installed"
-            print("Notice: 'websockets' package not installed; real-time WS bridge disabled (REST fallback active).")
+            logger.info("websockets package not installed; real-time WS bridge disabled (REST fallback active).")
             return
         self._task = asyncio.create_task(self._run_loop())
+        self._flush_task = asyncio.create_task(self._price_flush_loop())
 
     async def stop(self) -> None:
         self._running = False
@@ -303,18 +302,37 @@ class NobitexWSBridge:
             except Exception:
                 pass
             self._upstream_ws = None
-        if self._task is not None:
-            self._task.cancel()
+        for task_attr in ("_task", "_flush_task"):
+            task = getattr(self, task_attr, None)
+            if task is not None:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    pass
+                setattr(self, task_attr, None)
+        # Gracefully close all connected local browser WebSocket clients
+        for ws in list(self._clients):
             try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
+                await asyncio.wait_for(ws.close(code=1001), timeout=1.0)
             except Exception:
                 pass
-            self._task = None
+            self._clients.discard(ws)
+            self._client_candles.pop(ws, None)
+        self._candle_refcounts.clear()
         await self._flush_dirty_prices(force=True)
         self._upstream_connected = False
         self._authenticated = False
+
+    async def _price_flush_loop(self) -> None:
+        """Periodically persist dirty market prices to SQLite without blocking upstream WS reads."""
+        while self._running:
+            await asyncio.sleep(self._price_flush_interval)
+            if not self._running:
+                break
+            await self._flush_dirty_prices(force=True)
 
     async def _send_upstream(self, payload: Dict[str, Any], send_fn: Optional[Callable[[str], Awaitable[None]]] = None) -> None:
         raw = json.dumps(payload, separators=(",", ":"))
@@ -358,6 +376,8 @@ class NobitexWSBridge:
                 return
             client_subs = self._client_candles.setdefault(ws, set())
             if target not in client_subs:
+                if len(client_subs) >= MAX_CANDLE_SUBS_PER_CLIENT:
+                    return
                 client_subs.add(target)
                 await self._increment_candle_ref(target)
             return
@@ -399,17 +419,29 @@ class NobitexWSBridge:
     async def _broadcast(self, payload: Dict[str, Any], target_candle: Optional[Tuple[str, str]] = None) -> None:
         if not self._clients:
             return
-        dead: List[Any] = []
+        targets: List[Any] = []
         for ws in list(self._clients):
             if target_candle is not None:
                 if target_candle not in self._client_candles.get(ws, set()):
                     continue
+            targets.append(ws)
+        if not targets:
+            return
+
+        async def _send_one(client_ws: Any) -> Optional[Any]:
             try:
-                await ws.send_json(payload)
+                await asyncio.wait_for(
+                    client_ws.send_json(payload),
+                    timeout=LOCAL_WS_SEND_TIMEOUT_SEC,
+                )
+                return None
             except Exception:
-                dead.append(ws)
-        for ws in dead:
-            await self.unregister_client(ws)
+                return client_ws
+
+        results = await asyncio.gather(*(_send_one(ws) for ws in targets), return_exceptions=False)
+        for dead_ws in results:
+            if dead_ws is not None:
+                await self.unregister_client(dead_ws)
 
     async def _broadcast_status(self) -> None:
         await self._broadcast({
@@ -462,11 +494,15 @@ class NobitexWSBridge:
             return
         batch = dict(self._dirty_prices)
         self._dirty_prices.clear()
-        self._last_db_flush = now
         try:
             await asyncio.to_thread(upsert_market_prices, batch, self._db_path)
+            self._last_db_flush = now
         except Exception as exc:
+            # Preserve unsaved entries that weren't superseded by newer ticks
+            for k, v in batch.items():
+                self._dirty_prices.setdefault(k, v)
             self._last_error = f"SQLite price flush error: {exc}"
+            logger.warning("SQLite price flush error: %s", exc)
 
     async def _process_raw_frame(
         self,
@@ -527,13 +563,11 @@ class NobitexWSBridge:
                 "isClosed": bool(info.get("isClosed", False)),
             }
             normalized[m_lower] = entry
-            self.latest_prices[m_lower] = entry
             self._dirty_prices[m_lower] = entry
 
         if not normalized:
             return
 
-        await self._flush_dirty_prices(force=False)
         await self._broadcast({
             "type": "market_stats",
             "data": normalized,

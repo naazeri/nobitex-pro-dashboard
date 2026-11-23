@@ -1,34 +1,40 @@
-import io
 import csv
-import time
+import io
+import logging
+import math
+import re
 import threading
-import json
+import time
 import webbrowser
+from collections import OrderedDict, defaultdict
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Optional, List, Dict, Any, Tuple
-from datetime import datetime, timezone, timedelta
-from collections import defaultdict, OrderedDict
-
-from nob.time_utils import IRST, now_irst, today_irst_str, ts_to_irst_date_str
-
-TEHRAN_TZ = IRST
+from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Response, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import (
+    BackgroundTasks,
+    FastAPI,
+    HTTPException,
+    Path as FastAPIPath,
+    Query,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
-
-try:
-    import jdatetime
-except ImportError:
-    jdatetime = None
+from pydantic import BaseModel, Field
 
 from nob.db import (
     init_db,
     upsert_trades,
     get_trades,
+    iter_trades_for_export,
     get_stats,
     get_distinct_markets,
     upsert_wallet_snapshots,
@@ -52,7 +58,6 @@ from nob.db import (
     reconcile_open_orders,
     update_order_status,
     get_max_trade_id,
-    get_max_order_id,
     get_unlinked_trade_order_ids,
     reconcile_trade_types_from_orders,
     get_known_closed_position_ids,
@@ -78,14 +83,76 @@ from nob.pnl import (
     calculate_daily_pnl_calendar,
     calculate_equity_curve,
 )
+from nob.time_utils import IRST, now_irst, today_irst_str, ts_to_irst_date_str
 from nob.ws_bridge import NobitexWSBridge
+
+try:
+    import jdatetime
+except ImportError:
+    jdatetime = None
+
+logger = logging.getLogger(__name__)
+TEHRAN_TZ = IRST
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
+ALLOWED_LOCAL_HOSTS = {"127.0.0.1", "localhost", "testserver"}
+_CANDLE_SYMBOL_RE = re.compile(r"^[A-Z0-9_-]{2,24}$")
+_ALLOWED_CANDLE_RESOLUTIONS = {"1", "5", "15", "30", "60", "180", "240", "360", "720", "D", "1W"}
+
 _nobitex_client: Optional[NobitexClient] = None
 _client_lock = threading.Lock()
 _ws_bridge: Optional[NobitexWSBridge] = None
+
+_open_orders_cache_lock = threading.Lock()
+_open_orders_cache: Dict[str, Any] = {"timestamp": 0.0, "data": None, "version": 0}
+
+_on_demand_positions_lock = threading.Lock()
+_last_positions_on_demand_ts = 0.0
+_ON_DEMAND_POSITIONS_COOLDOWN_SEC = 600.0
+
+_on_demand_btc_lock = threading.Lock()
+_last_btc_on_demand_ts = 0.0
+_ON_DEMAND_BTC_COOLDOWN_SEC = 600.0
+
+
+def _is_allowed_local_origin(origin: Optional[str], host: Optional[str] = None) -> bool:
+    """Validate that an Origin header points to a permitted localhost origin."""
+    if origin is None:
+        return True
+    try:
+        parsed = urlparse(origin.strip())
+    except Exception:
+        return False
+    if parsed.scheme not in {"http", "https"} or parsed.hostname not in ALLOWED_LOCAL_HOSTS:
+        return False
+    if host:
+        host_clean = host.strip()
+        if ":" in host_clean:
+            _, port_str = host_clean.rsplit(":", 1)
+            host_port = int(port_str) if port_str.isdigit() else None
+        else:
+            host_port = 443 if parsed.scheme == "https" else 80
+        if host_port is not None:
+            origin_port = parsed.port or (443 if parsed.scheme == "https" else 80)
+            if origin_port != host_port:
+                return False
+    return True
+
+
+def _format_decimal_str(val: float) -> str:
+    """Format a finite positive float as a plain decimal string (no scientific notation)."""
+    if not math.isfinite(val):
+        raise ValueError("Value must be finite")
+    try:
+        d = Decimal(str(val))
+    except InvalidOperation as exc:
+        raise ValueError("Invalid numeric value") from exc
+    text = format(d.normalize(), "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
 
 
 def get_nobitex_client() -> NobitexClient:
@@ -99,8 +166,10 @@ def get_nobitex_client() -> NobitexClient:
 
 
 def _invalidate_open_orders_cache() -> None:
-    global _open_orders_cache
-    _open_orders_cache = {"timestamp": 0.0, "data": None}
+    with _open_orders_cache_lock:
+        _open_orders_cache["timestamp"] = 0.0
+        _open_orders_cache["data"] = None
+        _open_orders_cache["version"] += 1
 
 
 def get_ws_bridge() -> NobitexWSBridge:
@@ -129,10 +198,23 @@ async def lifespan(app: FastAPI):
         _nobitex_client = None
 
 
-app = FastAPI(title="Nobitex Portfolio & Trades", version="2.1.0", lifespan=lifespan)
+app = FastAPI(title="Nobitex Portfolio & Trades", version="2.2.0", lifespan=lifespan)
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "testserver"])
 
-# Global sync status
-sync_status = {
+
+@app.middleware("http")
+async def _enforce_local_origin_on_mutations(request: Request, call_next):
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+        origin = request.headers.get("origin")
+        host = request.headers.get("host")
+        if origin is not None and not _is_allowed_local_origin(origin, host):
+            return JSONResponse(status_code=403, content={"detail": "Cross-origin mutating request rejected."})
+    return await call_next(request)
+
+
+# Global sync status protected by _sync_lock
+_sync_lock = threading.Lock()
+sync_status: Dict[str, Any] = {
     "is_syncing": False,
     "last_result": None,
     "last_error": None,
@@ -140,6 +222,11 @@ sync_status = {
     "mode": None,
     "step": None,
 }
+
+
+def _update_sync_status(**kwargs: Any) -> None:
+    with _sync_lock:
+        sync_status.update(kwargs)
 
 
 @app.get("/api/stats")
@@ -286,20 +373,29 @@ def api_get_portfolio_charts(
 def api_get_positions():
     """
     Return leveraged/margin positions from /positions/list.
+    Guards on-demand empty-DB fetch with a 10-minute cooldown so Spot-only accounts
+    never burn the 30 req/10 min Nobitex positions quota on repeated GET requests.
     """
+    global _last_positions_on_demand_ts
     prices = get_market_prices()
     positions = get_positions()
 
-    # If no positions saved yet, fetch directly from Nobitex (paginated)
     if not positions:
-        try:
-            client = get_nobitex_client()
-            active = client.fetch_all_positions("active", page_size=100, max_pages=5)
-            past = client.fetch_all_positions("past", page_size=100, max_pages=10)
-            upsert_positions(active + past)
-            positions = get_positions()
-        except Exception as e:
-            print("Notice: Error fetching positions on demand:", e)
+        should_fetch = False
+        now_m = time.monotonic()
+        with _on_demand_positions_lock:
+            if (now_m - _last_positions_on_demand_ts) >= _ON_DEMAND_POSITIONS_COOLDOWN_SEC:
+                _last_positions_on_demand_ts = now_m
+                should_fetch = True
+        if should_fetch:
+            try:
+                client = get_nobitex_client()
+                active = client.fetch_all_positions("active", page_size=100, max_pages=5)
+                past = client.fetch_all_positions("past", page_size=100, max_pages=10)
+                upsert_positions(active + past)
+                positions = get_positions()
+            except Exception as e:
+                logger.warning("Error fetching positions on demand: %s", e)
 
     return calculate_positions_summary(positions, prices)
 
@@ -376,8 +472,16 @@ def api_get_equity_curve(
         btc_cache = get_btc_daily_history()
         today_str = today_irst_str()
         if not btc_cache or today_str not in btc_cache:
-            sync_btc_history_if_needed()
-            btc_cache = get_btc_daily_history()
+            should_fetch_btc = False
+            now_m = time.monotonic()
+            with _on_demand_btc_lock:
+                global _last_btc_on_demand_ts
+                if (now_m - _last_btc_on_demand_ts) >= _ON_DEMAND_BTC_COOLDOWN_SEC:
+                    _last_btc_on_demand_ts = now_m
+                    should_fetch_btc = True
+            if should_fetch_btc:
+                sync_btc_history_if_needed()
+                btc_cache = get_btc_daily_history()
     except Exception:
         btc_cache = get_btc_daily_history()
 
@@ -439,8 +543,8 @@ def api_get_trades(
     tag: Optional[str] = None,
     from_date: Optional[str] = None,
     to_date: Optional[str] = None,
-    page: int = 1,
-    page_size: int = 50,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=500),
     sort_by: str = "timestamp",
     sort_desc: bool = True,
 ):
@@ -476,8 +580,8 @@ class JournalPayload(BaseModel):
     entry_type: str  # 'trade' or 'position'
     target_id: int
     notes: str = ""
-    tags: list = []
-    rating: int = 0
+    tags: List[str] = Field(default_factory=list)
+    rating: int = Field(0, ge=0, le=5)
 
 
 @app.get("/api/journal")
@@ -527,20 +631,21 @@ def api_delete_journal(entry_type: str, target_id: int):
 
 
 def perform_sync(full: bool = False):
-    global sync_status
     warnings_list: List[str] = []
     mode = "full" if full else "incremental"
     try:
-        sync_status["is_syncing"] = True
-        sync_status["last_error"] = None
-        sync_status["warnings"] = []
-        sync_status["mode"] = mode
-        sync_status["step"] = "Connecting to Nobitex..."
+        _update_sync_status(
+            is_syncing=True,
+            last_error=None,
+            warnings=[],
+            mode=mode,
+            step="Connecting to Nobitex...",
+        )
 
         client = get_nobitex_client()
 
         # 1. Sync wallet balances (spot + margin)
-        sync_status["step"] = "Fetching wallet balances..."
+        _update_sync_status(step="Fetching wallet balances...")
         try:
             spot_wallets = client.fetch_wallets(wallet_type="spot")
             upsert_wallet_snapshots(spot_wallets, wallet_type="spot")
@@ -557,7 +662,7 @@ def perform_sync(full: bool = False):
             warnings_list.append(f"Wallets sync failed: {e}")
 
         # 2. Sync real-time market prices (public)
-        sync_status["step"] = "Updating market prices..."
+        _update_sync_status(step="Updating market prices...")
         prices_map: Dict[str, Any] = {}
         try:
             prices_map = client.fetch_market_stats()
@@ -567,7 +672,7 @@ def perform_sync(full: bool = False):
             warnings_list.append(f"Market prices sync failed: {e}")
 
         # 3. Sync orders (incremental via dedicated orders cursor in metadata)
-        sync_status["step"] = "Fetching user orders..."
+        _update_sync_status(step="Fetching user orders...")
         try:
             open_orders = client.fetch_all_orders(status="open", page_size=100, max_pages=5)
             reconcile_open_orders(open_orders)
@@ -594,7 +699,7 @@ def perform_sync(full: bool = False):
             warnings_list.append(f"Orders sync failed: {e}")
 
         # 4. Sync margin & futures positions (full pagination + stale Open reconciliation)
-        sync_status["step"] = "Fetching margin positions..."
+        _update_sync_status(step="Fetching margin positions...")
         pos_count = 0
         try:
             active_pos = client.fetch_all_positions("active", page_size=100, max_pages=5)
@@ -631,7 +736,7 @@ def perform_sync(full: bool = False):
             warnings_list.append(f"Positions sync failed: {e}")
 
         # 5. Sync trades (incremental via fromId when local trades exist)
-        sync_status["step"] = "Syncing trade history..."
+        _update_sync_status(step="Syncing trade history...")
         max_trade_id = None if full else get_max_trade_id()
         if max_trade_id is not None:
             trades = client.fetch_incremental_trades(since_id=max_trade_id, page_size=500)
@@ -650,13 +755,18 @@ def perform_sync(full: bool = False):
                         order_obj = client.fetch_order_status(oid)
                         if isinstance(order_obj, dict) and order_obj.get("id"):
                             fetched_missing.append(order_obj)
-                    except Exception:
-                        pass
+                    except (NobitexAuthError, NobitexRateLimitError) as stop_err:
+                        warnings_list.append(
+                            f"Order backfill halted ({stop_err.code}): {stop_err.message}"
+                        )
+                        break
+                    except Exception as oid_err:
+                        logger.debug("Order status lookup failed for %s: %s", oid, oid_err)
                 if fetched_missing:
                     upsert_orders(fetched_missing)
             reconcile_trade_types_from_orders()
         except Exception as rec_trade_err:
-            print("Notice: Order-trade reconciliation skipped:", rec_trade_err)
+            logger.warning("Order-trade reconciliation skipped: %s", rec_trade_err)
 
         # 6. Refresh cached market metadata (12h TTL) for live leverage, fees & precisions
         try:
@@ -680,7 +790,7 @@ def perform_sync(full: bool = False):
             warnings_list.append(f"System options metadata skipped: {opt_err}")
 
         # 7. Sync deposits & withdrawals for cashflow & crypto inventory reconciliation
-        sync_status["step"] = "Syncing deposits & withdrawals..."
+        _update_sync_status(step="Syncing deposits & withdrawals...")
         try:
             deposits = client.fetch_all_deposits(page_size=100, max_pages=10)
             if deposits:
@@ -777,34 +887,38 @@ def perform_sync(full: bool = False):
 
         record_last_sync()
 
-        sync_status["warnings"] = warnings_list
-        sync_status["last_result"] = (
-            f"Successfully synced ({mode}) {saved_count} trades, {pos_count} positions, and updated wallets."
+        _update_sync_status(
+            warnings=warnings_list,
+            last_result=(
+                f"Successfully synced ({mode}) {saved_count} trades, {pos_count} positions, and updated wallets."
+            ),
         )
     except Exception as e:
-        sync_status["last_error"] = str(e)
-        sync_status["warnings"] = warnings_list
+        logger.exception("Sync failed")
+        _update_sync_status(last_error=str(e), warnings=warnings_list)
     finally:
-        sync_status["is_syncing"] = False
-        sync_status["step"] = None
+        _update_sync_status(is_syncing=False, step=None)
 
 
 @app.post("/api/sync")
 def api_sync_trades(background_tasks: BackgroundTasks, full: bool = False):
     """Trigger background sync with Nobitex API (incremental by default; pass full=true for full re-sync)."""
-    global sync_status
-    if sync_status["is_syncing"]:
-        return {"status": "in_progress", "message": "Sync is already in progress."}
+    with _sync_lock:
+        if sync_status["is_syncing"]:
+            return {"status": "in_progress", "message": "Sync is already in progress."}
+        sync_status["is_syncing"] = True
+        sync_status["mode"] = "full" if full else "incremental"
+        sync_status["step"] = "Queued..."
 
-    sync_status["is_syncing"] = True
     background_tasks.add_task(perform_sync, full=full)
     return {"status": "started", "mode": "full" if full else "incremental", "message": "Synchronization started."}
 
 
 @app.get("/api/sync/status")
 def api_sync_status():
-    """Check sync progress status."""
-    return sync_status
+    """Check sync progress status (thread-safe snapshot)."""
+    with _sync_lock:
+        return {**sync_status, "warnings": list(sync_status.get("warnings") or [])}
 
 
 _prices_refresh_lock = threading.Lock()
@@ -844,8 +958,12 @@ def api_refresh_prices():
         )
     except NobitexAPIError as e:
         return {"status": "error", "code": e.code, "message": e.message}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
+    except Exception:
+        logger.exception("Unexpected error refreshing prices")
+        return JSONResponse(
+            status_code=502,
+            content={"status": "error", "message": "Failed to refresh market prices."},
+        )
 
 
 @app.get("/api/export/csv")
@@ -854,26 +972,14 @@ def api_export_csv(
     type: Optional[str] = None,
     execution_type: Optional[str] = None,
     market: Optional[str] = None,
+    symbol: Optional[str] = None,
     search: Optional[str] = None,
-    sort_by: str = "timestamp",
+    tag: Optional[str] = None,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
     lang: str = "en",
 ):
-    """Export filtered trades as downloadable CSV with UTF-8 BOM."""
-    trades, _ = get_trades(
-        exclude_fiat_stable=exclude_fiat_stable,
-        trade_type=type,
-        execution_type=execution_type,
-        market=market,
-        search=search,
-        page=1,
-        page_size=100000,
-        sort_by=sort_by,
-        sort_desc=True,
-    )
-
-    output = io.StringIO()
-    output.write("\ufeff")  # UTF-8 BOM
-
+    """Stream filtered trades as downloadable CSV with UTF-8 BOM in bounded DB batches."""
     fieldnames = [
         "id",
         "order_id",
@@ -890,39 +996,57 @@ def api_export_csv(
         "dst_currency",
     ]
 
-    writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
-    writer.writeheader()
+    def _csv_stream():
+        buf = io.StringIO()
+        buf.write("\ufeff")  # UTF-8 BOM
+        writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
+        yield buf.getvalue()
+        buf.seek(0)
+        buf.truncate(0)
 
-    for t in trades:
-        row = dict(t)
-        row["price_usdt"] = row.get("price")
-        row["total_usdt"] = row.get("total")
-        row["net_amount"] = row.get("net_amount") if row.get("net_amount") is not None else ""
+        for batch in iter_trades_for_export(
+            exclude_fiat_stable=exclude_fiat_stable,
+            trade_type=type,
+            execution_type=execution_type,
+            market=market,
+            symbol=symbol,
+            search=search,
+            tag=tag,
+            from_date=from_date,
+            to_date=to_date,
+            batch_size=500,
+        ):
+            for t in batch:
+                row = dict(t)
+                row["price_usdt"] = row.get("price")
+                row["total_usdt"] = row.get("total")
+                row["net_amount"] = row.get("net_amount") if row.get("net_amount") is not None else ""
 
-        raw_ts = str(row.get("timestamp", ""))
-        try:
-            clean_ts = raw_ts.replace("Z", "+00:00")
-            dt = datetime.fromisoformat(clean_ts)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            dt_tehran = dt.astimezone(TEHRAN_TZ)
-            if lang == "fa" and jdatetime:
-                jdt = jdatetime.datetime.fromgregorian(datetime=dt_tehran)
-                row["timestamp"] = jdt.strftime("%Y/%m/%d %H:%M:%S")
-            else:
-                row["timestamp"] = dt_tehran.strftime("%Y-%m-%d %H:%M:%S")
-        except Exception:
-            pass
+                raw_ts = str(row.get("timestamp", ""))
+                try:
+                    clean_ts = raw_ts.replace("Z", "+00:00")
+                    dt = datetime.fromisoformat(clean_ts)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    dt_tehran = dt.astimezone(TEHRAN_TZ)
+                    if lang == "fa" and jdatetime:
+                        jdt = jdatetime.datetime.fromgregorian(datetime=dt_tehran)
+                        row["timestamp"] = jdt.strftime("%Y/%m/%d %H:%M:%S")
+                    else:
+                        row["timestamp"] = dt_tehran.strftime("%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    pass
 
-        writer.writerow(row)
+                writer.writerow(row)
+            yield buf.getvalue()
+            buf.seek(0)
+            buf.truncate(0)
 
-    output.seek(0)
-    filename = "nobitex_trades.csv"
-
-    return Response(
-        content=output.getvalue(),
+    return StreamingResponse(
+        _csv_stream(),
         media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f"attachment; filename={filename}"},
+        headers={"Content-Disposition": "attachment; filename=nobitex_trades.csv"},
     )
 
 
@@ -975,20 +1099,35 @@ def api_get_candles(
     Fetch OHLCV candles from Nobitex UDF API with 500-bar pagination, bounded LRU/TTL cache,
     7-day intraday clamp (1/5/15/30m), and weekly aggregation (ADR-006).
     """
-    clean_symbol = symbol.replace("-", "").replace("/", "").upper()
+    clean_symbol = symbol.replace("-", "").replace("/", "").strip().upper()
+    if not _CANDLE_SYMBOL_RE.match(clean_symbol):
+        raise HTTPException(status_code=400, detail="Invalid symbol format.")
 
     res_input = resolution.strip()
     res_upper = res_input.upper()
-    if res_upper in ["1H", "60"]:
-        res_norm = "60"
-    elif res_upper in ["4H", "240"]:
-        res_norm = "240"
-    elif res_upper in ["1D", "D"]:
-        res_norm = "D"
-    elif res_upper in ["1W", "W"]:
-        res_norm = "1W"
-    else:
-        res_norm = res_input
+    res_aliases = {
+        "1M": "1",
+        "5M": "5",
+        "15M": "15",
+        "30M": "30",
+        "1H": "60",
+        "3H": "180",
+        "4H": "240",
+        "6H": "360",
+        "12H": "720",
+        "1D": "D",
+        "W": "1W",
+    }
+    res_norm = res_aliases.get(res_upper, res_upper)
+    if res_norm not in _ALLOWED_CANDLE_RESOLUTIONS:
+        raise HTTPException(status_code=400, detail="Unsupported candle resolution.")
+
+    if from_ts is not None and from_ts <= 0:
+        raise HTTPException(status_code=400, detail="from_ts must be positive.")
+    if to_ts is not None and to_ts <= 0:
+        raise HTTPException(status_code=400, detail="to_ts must be positive.")
+    if from_ts is not None and to_ts is not None and from_ts >= to_ts:
+        raise HTTPException(status_code=400, detail="from_ts must be less than to_ts.")
 
     # Handle restricted currency pairs (USDT/IRT, DAI/IRT)
     if clean_symbol in ["USDTIRT", "DAIIRT"]:
@@ -1057,8 +1196,9 @@ def api_get_candles(
         raise HTTPException(status_code=429, detail=f"Nobitex UDF Rate Limit: {e.message}")
     except NobitexAPIError as e:
         raise HTTPException(status_code=502, detail=f"Nobitex UDF Error: {e.message}")
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Nobitex UDF Network Error: {str(e)}")
+    except Exception:
+        logger.exception("Nobitex UDF network error for %s", clean_symbol)
+        raise HTTPException(status_code=502, detail="Nobitex UDF Network Error")
 
     if data.get("s") != "ok":
         return {
@@ -1078,11 +1218,11 @@ def api_get_candles(
     candles = []
     if res_norm == "1W":
         weeks = defaultdict(list)
-        for t, o, h, l, c, v in zip(t_arr, o_arr, h_arr, l_arr, c_arr, v_arr):
+        for t, o, h, low_p, c, v in zip(t_arr, o_arr, h_arr, l_arr, c_arr, v_arr):
             dt = datetime.fromtimestamp(t, tz=timezone.utc)
             start_of_week = dt - timedelta(days=dt.weekday())
             w_ts = int(start_of_week.replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
-            weeks[w_ts].append((t, o, h, l, c, v))
+            weeks[w_ts].append((t, o, h, low_p, c, v))
 
         for w_ts in sorted(weeks.keys()):
             bars = weeks[w_ts]
@@ -1095,12 +1235,12 @@ def api_get_candles(
                 "volume": float(sum(b[5] for b in bars)),
             })
     else:
-        for t, o, h, l, c, v in zip(t_arr, o_arr, h_arr, l_arr, c_arr, v_arr):
+        for t, o, h, low_p, c, v in zip(t_arr, o_arr, h_arr, l_arr, c_arr, v_arr):
             candles.append({
                 "timestamp": int(t) * 1000,
                 "open": float(o),
                 "high": float(h),
-                "low": float(l),
+                "low": float(low_p),
                 "close": float(c),
                 "volume": float(v) if v is not None else 0.0,
             })
@@ -1198,13 +1338,7 @@ def api_get_chart_symbols():
 # ==========================================
 
 class CancelOrderRequest(BaseModel):
-    order_id: int
-
-
-_open_orders_cache = {
-    "timestamp": 0.0,
-    "data": None
-}
+    order_id: int = Field(..., gt=0)
 
 
 @app.get("/api/orders/open")
@@ -1213,12 +1347,14 @@ def api_get_open_orders(refresh: bool = False):
     Fetch all active/open orders with Spot vs Margin separation,
     enriched with current market price, distance to trigger %, and fill progress.
     """
-    global _open_orders_cache
-    now = time.time()
+    now = time.monotonic()
 
-    # Use cached data if within 10 seconds unless refresh is requested
-    if not refresh and _open_orders_cache["data"] and (now - _open_orders_cache["timestamp"] < 10.0):
-        return _open_orders_cache["data"]
+    with _open_orders_cache_lock:
+        cached_data = _open_orders_cache["data"]
+        cached_ts = _open_orders_cache["timestamp"]
+        start_version = _open_orders_cache["version"]
+        if not refresh and cached_data and (now - cached_ts < 10.0):
+            return cached_data
 
     client = get_nobitex_client()
     raw_orders = []
@@ -1341,7 +1477,10 @@ def api_get_open_orders(refresh: bool = False):
         "source": source,
         "updated_at": now_irst().isoformat(),
     }
-    _open_orders_cache = {"timestamp": now, "data": result}
+    with _open_orders_cache_lock:
+        if _open_orders_cache["version"] == start_version:
+            _open_orders_cache["timestamp"] = time.monotonic()
+            _open_orders_cache["data"] = result
     return result
 
 
@@ -1350,56 +1489,35 @@ def api_cancel_order(req: CancelOrderRequest):
     """
     Cancel an open order on Nobitex and update local SQLite status.
     """
-    global _open_orders_cache
-    if not req.order_id:
-        raise HTTPException(status_code=400, detail="order_id is required")
-
     client = get_nobitex_client()
     try:
         res = client.cancel_order(req.order_id)
         update_order_status(req.order_id, "Canceled")
-        _open_orders_cache = {"timestamp": 0.0, "data": None}
+        _invalidate_open_orders_cache()
         return {"status": "ok", "message": "سفارش با موفقیت لغو شد.", "result": res}
-    except NobitexAuthError as e:
-        msg = "کلید API شما دسترسی لغو سفارش (TRADE) ندارد یا نامعتبر است."
-        return JSONResponse(
-            status_code=403,
-            content={"status": "failed", "code": e.code, "message": msg, "detail": msg},
-        )
-    except NobitexRateLimitError as e:
-        msg = f"محدودیت فراخوانی نوبیتکس؛ لطفاً {int(e.backoff or 5)} ثانیه صبر کنید."
-        return JSONResponse(
-            status_code=429,
-            content={"status": "failed", "code": e.code, "message": msg, "detail": msg, "backoff": e.backoff},
-        )
-    except NobitexAPIError as e:
-        http_status = e.status_code if 400 <= e.status_code < 500 else 422
-        return JSONResponse(
-            status_code=http_status,
-            content={"status": "failed", "code": e.code, "message": e.message, "detail": e.message},
-        )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return _map_trade_action_error(e)
 
 
 class ClosePositionRequest(BaseModel):
     execution: str = "market"  # limit, market, stop_limit, stop_market, oco
-    amount: float
-    price: Optional[float] = None
-    stop_price: Optional[float] = None
-    stop_limit_price: Optional[float] = None
+    amount: float = Field(..., gt=0, allow_inf_nan=False)
+    price: Optional[float] = Field(None, gt=0, allow_inf_nan=False)
+    stop_price: Optional[float] = Field(None, gt=0, allow_inf_nan=False)
+    stop_limit_price: Optional[float] = Field(None, gt=0, allow_inf_nan=False)
 
 
 class EditCollateralRequest(BaseModel):
-    collateral: float
+    collateral: float = Field(..., gt=0, allow_inf_nan=False)
 
 
 class CancelOldOrdersRequest(BaseModel):
-    hours: Optional[float] = None
+    hours: Optional[float] = Field(None, ge=0, allow_inf_nan=False)
     execution: Optional[str] = None
     trade_type: Optional[str] = None
     src_currency: Optional[str] = None
     dst_currency: Optional[str] = None
+    confirm_all: bool = False
 
 
 def _map_trade_action_error(e: Exception) -> JSONResponse:
@@ -1422,52 +1540,62 @@ def _map_trade_action_error(e: Exception) -> JSONResponse:
             status_code=http_status,
             content={"status": "failed", "code": e.code, "message": e.message, "detail": e.message},
         )
-    return JSONResponse(status_code=500, content={"status": "failed", "code": "InternalError", "message": str(e), "detail": str(e)})
+    logger.exception("Unexpected error in TRADE action")
+    return JSONResponse(
+        status_code=500,
+        content={"status": "failed", "code": "InternalError", "message": "Internal server error", "detail": "Internal server error"},
+    )
 
 
 @app.post("/api/positions/{position_id}/close")
-def api_close_position(position_id: int, req: ClosePositionRequest):
+def api_close_position(
+    req: ClosePositionRequest,
+    position_id: int = FastAPIPath(..., gt=0),
+):
     """Submit a closing order for an open margin position (requires TRADE permission)."""
     exec_norm = req.execution.strip().lower()
     if exec_norm not in {"limit", "market", "stop_limit", "stop_market", "oco"}:
         raise HTTPException(status_code=400, detail="Invalid execution type. Must be limit, market, stop_limit, stop_market, or oco.")
-    if req.amount <= 0:
-        raise HTTPException(status_code=400, detail="amount must be greater than 0.")
-    if exec_norm in {"limit", "stop_limit", "oco"} and (req.price is None or req.price <= 0):
+    if exec_norm in {"limit", "stop_limit", "oco"} and req.price is None:
         raise HTTPException(status_code=400, detail=f"price is required and must be > 0 for execution='{exec_norm}'.")
-    if exec_norm in {"stop_limit", "stop_market", "oco"} and (req.stop_price is None or req.stop_price <= 0):
+    if exec_norm in {"stop_limit", "stop_market", "oco"} and req.stop_price is None:
         raise HTTPException(status_code=400, detail=f"stop_price is required and must be > 0 for execution='{exec_norm}'.")
+    if exec_norm == "oco" and req.stop_limit_price is None:
+        raise HTTPException(status_code=400, detail="stop_limit_price is required and must be > 0 for execution='oco'.")
 
     client = get_nobitex_client()
     try:
         res = client.close_position(
             position_id=position_id,
             execution=exec_norm,
-            amount=req.amount,
-            price=req.price,
-            stop_price=req.stop_price,
-            stop_limit_price=req.stop_limit_price,
+            amount=_format_decimal_str(req.amount),
+            price=_format_decimal_str(req.price) if req.price is not None else None,
+            stop_price=_format_decimal_str(req.stop_price) if req.stop_price is not None else None,
+            stop_limit_price=_format_decimal_str(req.stop_limit_price) if req.stop_limit_price is not None else None,
         )
         try:
             updated = client.fetch_position_status(position_id)
             if updated:
                 upsert_positions([updated])
-        except Exception:
-            pass
+        except Exception as st_err:
+            logger.debug("Post-close position status refresh skipped for %s: %s", position_id, st_err)
         return {"status": "ok", "message": "سفارش بستن موقعیت ثبت شد.", "result": res}
     except Exception as e:
         return _map_trade_action_error(e)
 
 
 @app.post("/api/positions/{position_id}/edit-collateral")
-def api_edit_position_collateral(position_id: int, req: EditCollateralRequest):
+def api_edit_position_collateral(
+    req: EditCollateralRequest,
+    position_id: int = FastAPIPath(..., gt=0),
+):
     """Increase or decrease collateral for an open margin position (requires TRADE permission)."""
-    if req.collateral <= 0:
-        raise HTTPException(status_code=400, detail="collateral must be greater than 0.")
-
     client = get_nobitex_client()
     try:
-        res = client.edit_position_collateral(position_id=position_id, collateral=req.collateral)
+        res = client.edit_position_collateral(
+            position_id=position_id,
+            collateral=_format_decimal_str(req.collateral),
+        )
         pos_obj = res.get("position") if isinstance(res, dict) else None
         if isinstance(pos_obj, dict) and pos_obj.get("id"):
             upsert_positions([pos_obj])
@@ -1476,8 +1604,8 @@ def api_edit_position_collateral(position_id: int, req: EditCollateralRequest):
                 updated = client.fetch_position_status(position_id)
                 if updated:
                     upsert_positions([updated])
-            except Exception:
-                pass
+            except Exception as st_err:
+                logger.debug("Post-collateral position refresh skipped for %s: %s", position_id, st_err)
         return {"status": "ok", "message": "وجه تضمین موقعیت با موفقیت به‌روزرسانی شد.", "result": res}
     except Exception as e:
         return _map_trade_action_error(e)
@@ -1486,12 +1614,19 @@ def api_edit_position_collateral(position_id: int, req: EditCollateralRequest):
 @app.post("/api/orders/cancel-old")
 def api_cancel_old_orders(req: CancelOldOrdersRequest):
     """Bulk-cancel active orders matching filters via POST /market/orders/cancel-old (TRADE permission)."""
-    if req.hours is not None and req.hours < 0:
-        raise HTTPException(status_code=400, detail="hours must be >= 0.")
     if req.execution and req.execution.strip().lower() not in {"limit", "market", "stop_limit", "stop_market"}:
         raise HTTPException(status_code=400, detail="Invalid execution filter.")
     if req.trade_type and req.trade_type.strip().lower() not in {"spot", "margin"}:
         raise HTTPException(status_code=400, detail="Invalid trade_type filter. Must be 'spot' or 'margin'.")
+    has_any_filter = any(
+        val is not None and (not isinstance(val, str) or bool(val.strip()))
+        for val in (req.hours, req.execution, req.trade_type, req.src_currency, req.dst_currency)
+    )
+    if not has_any_filter and not req.confirm_all:
+        raise HTTPException(
+            status_code=400,
+            detail="At least one filter (hours, execution, trade_type, src_currency, dst_currency) or confirm_all=true is required.",
+        )
 
     client = get_nobitex_client()
     try:
@@ -1574,7 +1709,7 @@ def api_get_user_profile(refresh: bool = False):
 # ==========================================
 
 @app.get("/api/ws/status")
-def api_ws_status():
+async def api_ws_status():
     """Return diagnostic status of the backend Nobitex Centrifugo WebSocket bridge."""
     return get_ws_bridge().get_status()
 
@@ -1583,9 +1718,15 @@ def api_ws_status():
 async def websocket_endpoint(websocket: WebSocket):
     """
     Local WebSocket endpoint (ws://127.0.0.1:8080/ws) for Vue 3 dashboard tabs.
-    Proxies normalized real-time market stats, candles, and private order/trade updates
-    from NobitexWSBridge while honoring ADR-012 (browser never connects externally).
+    Validates Origin header before accepting to prevent Cross-Site WebSocket Hijacking (CSWSH).
     """
+    origin = websocket.headers.get("origin")
+    host = websocket.headers.get("host")
+    if origin is not None and not _is_allowed_local_origin(origin, host):
+        logger.warning("Rejected cross-origin WebSocket attempt from origin=%r host=%r", origin, host)
+        await websocket.close(code=1008)
+        return
+
     await websocket.accept()
     bridge = get_ws_bridge()
     await bridge.register_client(websocket)
@@ -1595,8 +1736,8 @@ async def websocket_endpoint(websocket: WebSocket):
             await bridge.handle_client_message(websocket, msg)
     except WebSocketDisconnect:
         pass
-    except Exception:
-        pass
+    except Exception as ws_err:
+        logger.debug("Local WS client loop closed: %s", ws_err)
     finally:
         await bridge.unregister_client(websocket)
 

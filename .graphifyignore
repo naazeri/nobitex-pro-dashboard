@@ -1,0 +1,4 @@
+# Exclude minified third-party bundles & static binary assets from Graphify knowledge graph
+src/nob/static/vendor/
+src/nob/static/icons/
+src/nob/static/fonts/

@@ -150,6 +150,10 @@ export const TRANSLATIONS = {
     activeBalance: "Active Balance",
     totalBalance: "Total Balance",
     assetMetrics: "Financial Performance",
+    colAction: "Action",
+    loading: "Loading...",
+    typeBuy: "Buy",
+    typeSell: "Sell",
 
     // Charts
     chartAllocationTitle: "Asset Allocation",
@@ -605,6 +609,10 @@ export const TRANSLATIONS = {
     activeBalance: "موجودی در دسترس",
     totalBalance: "موجودی کل",
     assetMetrics: "عملکرد مالی و بازدهی",
+    colAction: "عملیات",
+    loading: "در حال بارگذاری...",
+    typeBuy: "خرید",
+    typeSell: "فروش",
 
     // Charts
     chartAllocationTitle: "تخصیص و توزیع دارایی‌ها",
@@ -925,45 +933,22 @@ export function formatDate(raw, lang = "en") {
     const dt = new Date(raw);
     if (isNaN(dt.getTime())) return raw;
 
-    let gy, gm, gd, hours, minutes, seconds;
-    try {
-      const fmt = new Intl.DateTimeFormat('en-US', {
-        timeZone: 'Asia/Tehran',
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        hour12: false
-      });
-      const parts = fmt.formatToParts(dt);
-      const p = {};
-      for (const part of parts) p[part.type] = part.value;
-      gy = parseInt(p.year, 10);
-      gm = parseInt(p.month, 10);
-      gd = parseInt(p.day, 10);
-      hours = p.hour;
-      minutes = p.minute;
-      seconds = p.second;
-    } catch {
-      // Robust Fallback: Iran Standard Time is permanently fixed at UTC+03:30
-      const tehranMs = dt.getTime() + (3 * 60 + 30) * 60 * 1000;
-      const dTehran = new Date(tehranMs);
-      gy = dTehran.getUTCFullYear();
-      gm = dTehran.getUTCMonth() + 1;
-      gd = dTehran.getUTCDate();
-      hours = String(dTehran.getUTCHours()).padStart(2, "0");
-      minutes = String(dTehran.getUTCMinutes()).padStart(2, "0");
-      seconds = String(dTehran.getUTCSeconds()).padStart(2, "0");
-    }
+    // ADR-010: Iran Standard Time is permanently fixed at UTC+03:30 (no DST since 1401/2022).
+    // Fixed UTC math eliminates OS tzdata drift and the Chromium hour12:false "24:xx:xx" midnight bug.
+    const tehranMs = dt.getTime() + (3 * 60 + 30) * 60 * 1000;
+    const dTehran = new Date(tehranMs);
+    const gy = dTehran.getUTCFullYear();
+    const gm = dTehran.getUTCMonth() + 1;
+    const gd = dTehran.getUTCDate();
+    const hours = String(dTehran.getUTCHours()).padStart(2, "0");
+    const minutes = String(dTehran.getUTCMinutes()).padStart(2, "0");
+    const seconds = String(dTehran.getUTCSeconds()).padStart(2, "0");
 
     if (lang === "fa" && window.jalaali) {
       const j = window.jalaali.toJalaali(gy, gm, gd);
       return `${j.jy}/${String(j.jm).padStart(2, "0")}/${String(j.jd).padStart(2, "0")} ${hours}:${minutes}:${seconds}`;
-    } else {
-      return `${gy}-${String(gm).padStart(2, "0")}-${String(gd).padStart(2, "0")} ${hours}:${minutes}:${seconds}`;
     }
+    return `${gy}-${String(gm).padStart(2, "0")}-${String(gd).padStart(2, "0")} ${hours}:${minutes}:${seconds}`;
   } catch {
     return raw;
   }

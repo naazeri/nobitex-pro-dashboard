@@ -1,10 +1,15 @@
+from contextlib import contextmanager
+from datetime import datetime, timezone
 import json
+import logging
 import sqlite3
 import threading
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Tuple
+from typing import Iterator, List, Dict, Any, Optional, Tuple
 
 from nob.time_utils import now_irst, irst_date_bounds_to_utc_iso
+
+logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_ROOT / "data"
@@ -12,6 +17,17 @@ DEFAULT_DB_PATH = DATA_DIR / "portfolio.db"
 
 _initialized_dbs: set[Path] = set()
 _init_db_lock = threading.Lock()
+_SQLITE_IN_CHUNK_SIZE = 500
+
+EXCLUDED_CASHFLOW_STATUSES = {
+    "canceled",
+    "cancelled",
+    "rejected",
+    "failed",
+    "expired",
+    "unconfirmed",
+}
+_EXCLUDED_CASHFLOW_STATUSES = EXCLUDED_CASHFLOW_STATUSES
 
 EXCLUDED_MARKETS = {
     "USDT-RLS",
@@ -27,16 +43,51 @@ EXCLUDED_MARKETS = {
 }
 
 
-def get_db_connection(db_path: Optional[Path] = None) -> sqlite3.Connection:
+def _safe_float(val: Any, default: float = 0.0) -> float:
+    if val is None:
+        return default
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return default
+
+
+def _chunked(seq: List[Any], size: int = _SQLITE_IN_CHUNK_SIZE) -> Iterator[List[Any]]:
+    for i in range(0, len(seq), size):
+        yield seq[i : i + size]
+
+
+def _escape_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _parse_journal_tags(raw: Any) -> List[str]:
+    if isinstance(raw, list):
+        return [str(x) for x in raw]
+    try:
+        parsed = json.loads(raw or "[]")
+        return [str(x) for x in parsed] if isinstance(parsed, list) else []
+    except Exception:
+        return []
+
+
+@contextmanager
+def get_db_connection(db_path: Optional[Path] = None) -> Iterator[sqlite3.Connection]:
+    """Context manager yielding a SQLite connection and always closing it on exit."""
     if db_path is None:
         db_path = DEFAULT_DB_PATH
-    db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path), timeout=30.0)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA busy_timeout=30000;")
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("PRAGMA synchronous=NORMAL;")
-    return conn
+    try:
+        conn.execute("PRAGMA busy_timeout=30000;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def init_db(db_path: Optional[Path] = None, force: bool = False):
@@ -53,7 +104,10 @@ def init_db(db_path: Optional[Path] = None, force: bool = False):
 
 def _init_db_schema(db_path: Optional[Path] = None):
     """Execute SQLite DDL and additive schema migrations."""
-    with get_db_connection(db_path) as conn:
+    target_path = db_path or DEFAULT_DB_PATH
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    with get_db_connection(target_path) as conn:
+        conn.execute("PRAGMA journal_mode=WAL;")
         cursor = conn.cursor()
 
         cursor.execute("""
@@ -84,6 +138,8 @@ def _init_db_schema(db_path: Optional[Path] = None):
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_trades_timestamp ON trades(timestamp);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_trades_type ON trades(type);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_trades_trade_type ON trades(trade_type);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_trades_order_id ON trades(order_id);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_trades_trade_type_ts ON trades(trade_type, timestamp, id);")
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS orders (
@@ -104,6 +160,7 @@ def _init_db_schema(db_path: Optional[Path] = None):
             );
         """)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_orders_trade_type ON orders(trade_type);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_orders_status_created ON orders(status, created_at DESC);")
         try:
             cursor.execute("ALTER TABLE orders ADD COLUMN unmatched_amount REAL DEFAULT 0;")
         except sqlite3.OperationalError:
@@ -183,6 +240,8 @@ def _init_db_schema(db_path: Optional[Path] = None):
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
         """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_positions_status_opened ON positions(status, opened_at DESC);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_positions_status_closed ON positions(status, closed_at DESC);")
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS btc_daily_history (
@@ -236,6 +295,7 @@ def _init_db_schema(db_path: Optional[Path] = None):
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_cashflows_timestamp ON cashflows(timestamp);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_cashflows_currency ON cashflows(currency);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_cashflows_type ON cashflows(flow_type);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_cashflows_type_ts ON cashflows(flow_type, timestamp);")
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS daily_equity_snapshots (
@@ -256,75 +316,85 @@ def _init_db_schema(db_path: Optional[Path] = None):
         conn.commit()
 
 
+def _upsert_orders_on_cursor(
+    cursor: sqlite3.Cursor, orders: List[Dict[str, Any]], now_str: str
+) -> int:
+    """Upsert orders using an existing SQLite cursor and batch-backfill Margin trades."""
+    count = 0
+    margin_order_ids: List[int] = []
+    for o in orders:
+        order_id = o.get("id")
+        if not order_id:
+            continue
+        trade_type = o.get("tradeType", "Spot")
+        market = str(o.get("market", "")).upper()
+        order_type = str(o.get("type", "")).lower()
+        execution = o.get("execution", "")
+
+        price = _safe_float(o.get("price"))
+        amount = _safe_float(o.get("amount"))
+        total_price = _safe_float(o.get("totalPrice") or o.get("totalOrderPrice"))
+        if total_price == 0.0 and price > 0 and amount > 0:
+            total_price = price * amount
+        matched_amount = _safe_float(o.get("matchedAmount"))
+        unmatched_amount = _safe_float(
+            o.get("unmatchedAmount"), max(0.0, amount - matched_amount)
+        )
+        leverage = _safe_float(o.get("leverage"), 1.0)
+        status = o.get("status", "")
+        created_at = o.get("created_at")
+
+        cursor.execute(
+            """
+            INSERT OR REPLACE INTO orders (
+                id, trade_type, market, type, execution, price,
+                amount, total_price, matched_amount, unmatched_amount, leverage, status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                order_id,
+                trade_type,
+                market,
+                order_type,
+                execution,
+                price,
+                amount,
+                total_price,
+                matched_amount,
+                unmatched_amount,
+                leverage,
+                status,
+                created_at,
+                now_str,
+            ),
+        )
+        if str(trade_type).strip().lower() == "margin":
+            try:
+                margin_order_ids.append(int(order_id))
+            except (ValueError, TypeError):
+                pass
+        count += 1
+
+    if margin_order_ids:
+        for batch in _chunked(list(dict.fromkeys(margin_order_ids))):
+            placeholders = ",".join("?" for _ in batch)
+            cursor.execute(
+                f"UPDATE trades SET trade_type = 'Margin' "
+                f"WHERE order_id IN ({placeholders}) "
+                f"AND (trade_type IS NULL OR trade_type != 'Margin')",
+                batch,
+            )
+    return count
+
+
 def upsert_orders(orders: List[Dict[str, Any]], db_path: Optional[Path] = None) -> int:
     """Insert or replace orders into database."""
     if not orders:
         return 0
     init_db(db_path)
-    count = 0
     now_str = now_irst().isoformat()
     with get_db_connection(db_path) as conn:
-        cursor = conn.cursor()
-        for o in orders:
-            order_id = o.get("id")
-            if not order_id:
-                continue
-            trade_type = o.get("tradeType", "Spot")
-            market = str(o.get("market", "")).upper()
-            order_type = str(o.get("type", "")).lower()
-            execution = o.get("execution", "")
-
-            def to_float(val, default=0.0):
-                if val is None:
-                    return default
-                try:
-                    return float(val)
-                except (ValueError, TypeError):
-                    return default
-
-            price = to_float(o.get("price"))
-            amount = to_float(o.get("amount"))
-            total_price = to_float(o.get("totalPrice") or o.get("totalOrderPrice"))
-            if total_price == 0.0 and price > 0 and amount > 0:
-                total_price = price * amount
-            matched_amount = to_float(o.get("matchedAmount"))
-            unmatched_amount = to_float(o.get("unmatchedAmount"), max(0.0, amount - matched_amount))
-            leverage = to_float(o.get("leverage"), 1.0)
-            status = o.get("status", "")
-            created_at = o.get("created_at")
-
-            cursor.execute(
-                """
-                INSERT OR REPLACE INTO orders (
-                    id, trade_type, market, type, execution, price,
-                    amount, total_price, matched_amount, unmatched_amount, leverage, status, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    order_id,
-                    trade_type,
-                    market,
-                    order_type,
-                    execution,
-                    price,
-                    amount,
-                    total_price,
-                    matched_amount,
-                    unmatched_amount,
-                    leverage,
-                    status,
-                    created_at,
-                    now_str,
-                ),
-            )
-            if str(trade_type).strip().lower() == "margin":
-                cursor.execute(
-                    "UPDATE trades SET trade_type = 'Margin' WHERE order_id = ? AND (trade_type IS NULL OR trade_type != 'Margin')",
-                    (order_id,),
-                )
-            count += 1
-        conn.commit()
-    return count
+        return _upsert_orders_on_cursor(conn.cursor(), orders, now_str)
 
 
 def get_open_orders(trade_type: Optional[str] = None, db_path: Optional[Path] = None) -> List[Dict[str, Any]]:
@@ -344,15 +414,12 @@ def get_open_orders(trade_type: Optional[str] = None, db_path: Optional[Path] = 
 
 def reconcile_open_orders(live_orders: List[Dict[str, Any]], db_path: Optional[Path] = None) -> int:
     """
-    Reconcile local SQLite open orders against the live snapshot from Nobitex.
+    Atomically reconcile local SQLite open orders against the live snapshot from Nobitex.
     Upserts all live open orders and marks any locally Active/New/Inactive orders
-    absent from the live snapshot as 'Closed' (even when live_orders is empty).
+    absent from the live snapshot as 'Closed' inside a single transaction.
     Returns the number of stale open orders marked as Closed.
     """
     init_db(db_path)
-    if live_orders:
-        upsert_orders(live_orders, db_path=db_path)
-
     live_ids: List[int] = []
     for o in live_orders:
         oid = o.get("id")
@@ -365,21 +432,41 @@ def reconcile_open_orders(live_orders: List[Dict[str, Any]], db_path: Optional[P
     now_str = now_irst().isoformat()
     with get_db_connection(db_path) as conn:
         cursor = conn.cursor()
+        if live_orders:
+            _upsert_orders_on_cursor(cursor, live_orders, now_str)
+
         if live_ids:
-            placeholders = ",".join("?" for _ in live_ids)
-            cursor.execute(
-                f"UPDATE orders SET status = 'Closed', updated_at = ? "
-                f"WHERE status IN ('Active', 'New', 'Inactive') AND id NOT IN ({placeholders})",
-                [now_str] + live_ids,
-            )
+            unique_ids = list(dict.fromkeys(live_ids))
+            if len(unique_ids) <= _SQLITE_IN_CHUNK_SIZE:
+                placeholders = ",".join("?" for _ in unique_ids)
+                cursor.execute(
+                    f"UPDATE orders SET status = 'Closed', updated_at = ? "
+                    f"WHERE status IN ('Active', 'New', 'Inactive') AND id NOT IN ({placeholders})",
+                    [now_str] + unique_ids,
+                )
+                closed_count = cursor.rowcount
+            else:
+                cursor.execute("CREATE TEMP TABLE IF NOT EXISTS _live_open_ids (id INTEGER PRIMARY KEY)")
+                cursor.execute("DELETE FROM _live_open_ids")
+                cursor.executemany(
+                    "INSERT OR IGNORE INTO _live_open_ids (id) VALUES (?)",
+                    [(oid,) for oid in unique_ids],
+                )
+                cursor.execute(
+                    "UPDATE orders SET status = 'Closed', updated_at = ? "
+                    "WHERE status IN ('Active', 'New', 'Inactive') "
+                    "AND id NOT IN (SELECT id FROM _live_open_ids)",
+                    (now_str,),
+                )
+                closed_count = cursor.rowcount
+                cursor.execute("DROP TABLE IF EXISTS _live_open_ids")
         else:
             cursor.execute(
                 "UPDATE orders SET status = 'Closed', updated_at = ? "
                 "WHERE status IN ('Active', 'New', 'Inactive')",
                 (now_str,),
             )
-        closed_count = cursor.rowcount
-        conn.commit()
+            closed_count = cursor.rowcount
     return closed_count
 
 
@@ -393,7 +480,6 @@ def update_order_status(order_id: int, status: str, db_path: Optional[Path] = No
             "UPDATE orders SET status = ?, updated_at = ? WHERE id = ?",
             (status, now_str, order_id),
         )
-        conn.commit()
         return cursor.rowcount > 0
 
 
@@ -402,14 +488,6 @@ def get_max_trade_id(db_path: Optional[Path] = None) -> Optional[int]:
     init_db(db_path)
     with get_db_connection(db_path) as conn:
         row = conn.execute("SELECT MAX(id) FROM trades").fetchone()
-        return int(row[0]) if row and row[0] is not None else None
-
-
-def get_max_order_id(db_path: Optional[Path] = None) -> Optional[int]:
-    """Return the highest order ID currently stored in SQLite, or None if empty."""
-    init_db(db_path)
-    with get_db_connection(db_path) as conn:
-        row = conn.execute("SELECT MAX(id) FROM orders").fetchone()
         return int(row[0]) if row and row[0] is not None else None
 
 
@@ -515,8 +593,9 @@ def get_metadata_cache(
         updated_str = parsed.get("updated_at")
         if not updated_str:
             return data, True
-        from datetime import datetime
         dt = datetime.fromisoformat(str(updated_str))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
         age = (now_irst() - dt).total_seconds()
         return data, age >= ttl_seconds
     except Exception:
@@ -545,8 +624,20 @@ def upsert_trades(
         cursor = conn.cursor()
 
         if order_type_map is None:
-            cursor.execute("SELECT id, trade_type FROM orders")
-            order_type_map = {row["id"]: row["trade_type"] for row in cursor.fetchall()}
+            order_type_map = {}
+            incoming_oids = list(
+                dict.fromkeys(
+                    t.get("orderId") for t in trades if t.get("orderId") is not None
+                )
+            )
+            for batch in _chunked(incoming_oids):
+                placeholders = ",".join("?" for _ in batch)
+                cursor.execute(
+                    f"SELECT id, trade_type FROM orders WHERE id IN ({placeholders})",
+                    batch,
+                )
+                for row in cursor.fetchall():
+                    order_type_map[row["id"]] = row["trade_type"]
 
         for t in trades:
             trade_id = t.get("id")
@@ -632,6 +723,97 @@ def upsert_trades(
     return count
 
 
+def _build_trades_where_clause(
+    exclude_fiat_stable: bool = True,
+    trade_type: Optional[str] = None,
+    execution_type: Optional[str] = None,
+    market: Optional[str] = None,
+    symbol: Optional[str] = None,
+    search: Optional[str] = None,
+    tag: Optional[str] = None,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+) -> Tuple[str, List[Any]]:
+    """Build parameterized WHERE clause for trades queries."""
+    conditions: List[str] = []
+    params: List[Any] = []
+
+    if exclude_fiat_stable:
+        placeholders = ",".join("?" for _ in EXCLUDED_MARKETS)
+        conditions.append(f"market NOT IN ({placeholders})")
+        params.extend(list(EXCLUDED_MARKETS))
+
+    if trade_type:
+        conditions.append("type = ?")
+        params.append(trade_type.lower())
+
+    if execution_type:
+        et_lower = execution_type.strip().lower()
+        if et_lower == "spot":
+            conditions.append("trade_type = 'Spot'")
+        elif et_lower == "margin":
+            conditions.append("trade_type = 'Margin'")
+
+    if market and market != "ALL":
+        conditions.append("market = ?")
+        params.append(market.upper())
+    elif symbol and symbol.strip():
+        escaped_sym = _escape_like(symbol.strip().upper())
+        conditions.append("market LIKE ? ESCAPE '\\'")
+        params.append(f"{escaped_sym}-%")
+
+    if search and search.strip():
+        s = f"%{_escape_like(search.strip().lower())}%"
+        conditions.append(
+            "(CAST(id AS TEXT) LIKE ? ESCAPE '\\' "
+            "OR CAST(order_id AS TEXT) LIKE ? ESCAPE '\\' "
+            "OR LOWER(market) LIKE ? ESCAPE '\\')"
+        )
+        params.extend([s, s, s])
+
+    if tag and tag.strip():
+        tag_val = f'%"{_escape_like(tag.strip())}"%'
+        conditions.append(
+            "EXISTS (SELECT 1 FROM trade_journal tj "
+            "WHERE tj.entry_type = 'trade' AND tj.target_id = trades.id "
+            "AND tj.tags LIKE ? ESCAPE '\\')"
+        )
+        params.append(tag_val)
+
+    utc_from, utc_to = irst_date_bounds_to_utc_iso(from_date, to_date)
+    if utc_from:
+        conditions.append("timestamp >= ?")
+        params.append(utc_from)
+
+    if utc_to:
+        conditions.append("timestamp <= ?")
+        params.append(utc_to)
+
+    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    return where_clause, params
+
+
+def _fetch_journal_map(
+    cursor: sqlite3.Cursor, entry_type: str, target_ids: List[int]
+) -> Dict[int, Dict[str, Any]]:
+    """Fetch trade_journal entries for a list of IDs in chunked IN batches."""
+    journal_map: Dict[int, Dict[str, Any]] = {}
+    if not target_ids:
+        return journal_map
+    for batch in _chunked(list(dict.fromkeys(target_ids))):
+        placeholders = ",".join("?" for _ in batch)
+        cursor.execute(
+            f"SELECT target_id, notes, tags, rating, updated_at "
+            f"FROM trade_journal WHERE entry_type = ? AND target_id IN ({placeholders})",
+            [entry_type] + batch,
+        )
+        for jrow in cursor.fetchall():
+            jd = dict(jrow)
+            jd["tags"] = _parse_journal_tags(jd.get("tags"))
+            journal_map[jd["target_id"]] = jd
+    return journal_map
+
+
 def get_trades(
     exclude_fiat_stable: bool = True,
     trade_type: Optional[str] = None,
@@ -653,51 +835,17 @@ def get_trades(
     """
     init_db(db_path)
 
-    conditions = []
-    params: List[Any] = []
-
-    if exclude_fiat_stable:
-        placeholders = ",".join("?" for _ in EXCLUDED_MARKETS)
-        conditions.append(f"market NOT IN ({placeholders})")
-        params.extend(list(EXCLUDED_MARKETS))
-
-    if trade_type:
-        conditions.append("type = ?")
-        params.append(trade_type.lower())
-
-    if execution_type and execution_type.lower() in {"spot", "margin"}:
-        conditions.append("LOWER(trade_type) = ?")
-        params.append(execution_type.lower())
-
-    if market and market != "ALL":
-        conditions.append("market = ?")
-        params.append(market.upper())
-    elif symbol and symbol.strip():
-        conditions.append("market LIKE ?")
-        params.append(f"{symbol.strip().upper()}-%")
-
-    if search:
-        s = f"%{search.strip().lower()}%"
-        conditions.append("(CAST(id AS TEXT) LIKE ? OR CAST(order_id AS TEXT) LIKE ? OR LOWER(market) LIKE ?)")
-        params.extend([s, s, s])
-
-    if tag and tag.strip():
-        tag_val = f'%"{tag.strip()}"%'
-        conditions.append(
-            "EXISTS (SELECT 1 FROM trade_journal tj WHERE tj.entry_type = 'trade' AND tj.target_id = trades.id AND tj.tags LIKE ?)"
-        )
-        params.append(tag_val)
-
-    utc_from, utc_to = irst_date_bounds_to_utc_iso(from_date, to_date)
-    if utc_from:
-        conditions.append("timestamp >= ?")
-        params.append(utc_from)
-
-    if utc_to:
-        conditions.append("timestamp <= ?")
-        params.append(utc_to)
-
-    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    where_clause, params = _build_trades_where_clause(
+        exclude_fiat_stable=exclude_fiat_stable,
+        trade_type=trade_type,
+        execution_type=execution_type,
+        market=market,
+        symbol=symbol,
+        search=search,
+        tag=tag,
+        from_date=from_date,
+        to_date=to_date,
+    )
 
     # Validate sort columns to avoid SQL injection (supports multi-column sort)
     valid_sort_cols = {
@@ -738,7 +886,8 @@ def get_trades(
 
     order_clause = f"ORDER BY {', '.join(order_parts)}"
 
-    offset = (max(1, page) - 1) * page_size
+    safe_page_size = max(1, int(page_size))
+    offset = (max(1, int(page)) - 1) * safe_page_size
 
     with get_db_connection(db_path) as conn:
         cursor = conn.cursor()
@@ -750,34 +899,73 @@ def get_trades(
 
         # Data query with computed net_amount (amount - fee for buys)
         data_sql = f"""
-            SELECT *, 
+            SELECT *,
                    CASE WHEN LOWER(type) = 'buy' THEN ROUND(MAX(0.0, amount - fee), 8) ELSE NULL END AS net_amount
             FROM trades {where_clause} {order_clause} LIMIT ? OFFSET ?
         """
-        cursor.execute(data_sql, params + [page_size, offset])
+        cursor.execute(data_sql, params + [safe_page_size, offset])
         rows = [dict(row) for row in cursor.fetchall()]
 
-        # Attach journal entry to each trade if present
+        # Attach journal entry to each trade if present (chunked IN)
         trade_ids = [r["id"] for r in rows]
         if trade_ids:
-            placeholders_id = ",".join("?" for _ in trade_ids)
-            cursor.execute(
-                f"SELECT target_id, notes, tags, rating, updated_at FROM trade_journal WHERE entry_type = 'trade' AND target_id IN ({placeholders_id})",
-                trade_ids,
-            )
-            journal_map = {}
-            for jrow in cursor.fetchall():
-                jd = dict(jrow)
-                try:
-                    jd["tags"] = json.loads(jd.get("tags") or "[]")
-                except Exception:
-                    jd["tags"] = []
-                journal_map[jd["target_id"]] = jd
-
+            journal_map = _fetch_journal_map(cursor, "trade", trade_ids)
             for r in rows:
                 r["journal"] = journal_map.get(r["id"])
 
     return rows, total_count
+
+
+def iter_trades_for_export(
+    exclude_fiat_stable: bool = True,
+    trade_type: Optional[str] = None,
+    execution_type: Optional[str] = None,
+    market: Optional[str] = None,
+    symbol: Optional[str] = None,
+    search: Optional[str] = None,
+    tag: Optional[str] = None,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    batch_size: int = 500,
+    db_path: Optional[Path] = None,
+) -> Iterator[List[Dict[str, Any]]]:
+    """Yield matching trades in bounded batches for streaming CSV export (no journal N+1)."""
+    init_db(db_path)
+    where_clause, params = _build_trades_where_clause(
+        exclude_fiat_stable=exclude_fiat_stable,
+        trade_type=trade_type,
+        execution_type=execution_type,
+        market=market,
+        symbol=symbol,
+        search=search,
+        tag=tag,
+        from_date=from_date,
+        to_date=to_date,
+    )
+    safe_batch = max(1, min(int(batch_size), 2000))
+    offset = 0
+    while True:
+        with get_db_connection(db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT id, order_id, timestamp, market, trade_type, type,
+                       price, amount,
+                       CASE WHEN LOWER(type) = 'buy' THEN ROUND(MAX(0.0, amount - fee), 8) ELSE NULL END AS net_amount,
+                       total, fee, src_currency, dst_currency
+                FROM trades {where_clause}
+                ORDER BY timestamp DESC, id DESC
+                LIMIT ? OFFSET ?
+                """,
+                params + [safe_batch, offset],
+            )
+            batch = [dict(row) for row in cursor.fetchall()]
+        if not batch:
+            break
+        yield batch
+        if len(batch) < safe_batch:
+            break
+        offset += len(batch)
 
 
 def get_distinct_markets(db_path: Optional[Path] = None) -> List[str]:
@@ -790,32 +978,33 @@ def get_distinct_markets(db_path: Optional[Path] = None) -> List[str]:
 
 
 def get_stats(db_path: Optional[Path] = None) -> Dict[str, Any]:
-    """Get aggregate statistics for the dashboard cards."""
+    """Get aggregate statistics for the dashboard cards in a single trades pass."""
     init_db(db_path)
     with get_db_connection(db_path) as conn:
         cursor = conn.cursor()
-
-        cursor.execute("SELECT COUNT(*) FROM trades")
-        total_trades = cursor.fetchone()[0]
-
         placeholders = ",".join("?" for _ in EXCLUDED_MARKETS)
-        cursor.execute(f"SELECT COUNT(*) FROM trades WHERE market NOT IN ({placeholders})", list(EXCLUDED_MARKETS))
-        crypto_trades = cursor.fetchone()[0]
+        cursor.execute(
+            f"""
+            SELECT
+                COUNT(*) AS total_trades,
+                COALESCE(SUM(CASE WHEN market NOT IN ({placeholders}) THEN 1 ELSE 0 END), 0) AS crypto_trades,
+                COALESCE(SUM(CASE WHEN type = 'buy' THEN 1 ELSE 0 END), 0) AS buy_trades,
+                COALESCE(SUM(CASE WHEN type = 'sell' THEN 1 ELSE 0 END), 0) AS sell_trades,
+                COUNT(DISTINCT market) AS active_markets,
+                MAX(timestamp) AS latest_trade_time
+            FROM trades
+            """,
+            list(EXCLUDED_MARKETS),
+        )
+        agg = cursor.fetchone()
+        total_trades = int(agg["total_trades"] or 0)
+        crypto_trades = int(agg["crypto_trades"] or 0)
+        buy_trades = int(agg["buy_trades"] or 0)
+        sell_trades = int(agg["sell_trades"] or 0)
+        active_markets = int(agg["active_markets"] or 0)
+        latest_trade_time = agg["latest_trade_time"]
 
-        cursor.execute("SELECT COUNT(*) FROM trades WHERE type = 'buy'")
-        buy_trades = cursor.fetchone()[0]
-
-        cursor.execute("SELECT COUNT(*) FROM trades WHERE type = 'sell'")
-        sell_trades = cursor.fetchone()[0]
-
-        cursor.execute("SELECT COUNT(DISTINCT market) FROM trades")
-        active_markets = cursor.fetchone()[0]
-
-        cursor.execute("SELECT MAX(timestamp) FROM trades")
-        latest_trade_time = cursor.fetchone()[0]
-
-        cursor.execute("SELECT value FROM metadata WHERE key = 'last_sync'")
-        row = cursor.fetchone()
+        row = cursor.execute("SELECT value FROM metadata WHERE key = 'last_sync'").fetchone()
         last_sync = row[0] if row else None
 
     return {
@@ -967,9 +1156,9 @@ def get_all_crypto_trades_chronological(
         params.append(utc_to)
 
     sql = f"""
-        SELECT *, 
+        SELECT *,
                CASE WHEN LOWER(type) = 'buy' THEN ROUND(MAX(0.0, amount - fee), 8) ELSE NULL END AS net_amount
-        FROM trades 
+        FROM trades
         WHERE {' AND '.join(conditions)}
         ORDER BY timestamp ASC, id ASC
     """
@@ -1089,20 +1278,7 @@ def get_positions(
 
         pos_ids = [r["id"] for r in rows]
         if pos_ids:
-            placeholders_pos = ",".join("?" for _ in pos_ids)
-            cursor.execute(
-                f"SELECT target_id, notes, tags, rating, updated_at FROM trade_journal WHERE entry_type = 'position' AND target_id IN ({placeholders_pos})",
-                pos_ids,
-            )
-            journal_map = {}
-            for jrow in cursor.fetchall():
-                jd = dict(jrow)
-                try:
-                    jd["tags"] = json.loads(jd.get("tags") or "[]")
-                except Exception:
-                    jd["tags"] = []
-                journal_map[jd["target_id"]] = jd
-
+            journal_map = _fetch_journal_map(cursor, "position", pos_ids)
             for r in rows:
                 r["journal"] = journal_map.get(r["id"])
 
@@ -1363,16 +1539,6 @@ def save_chart_state(
         return True
 
 
-_EXCLUDED_CASHFLOW_STATUSES = {
-    "canceled",
-    "cancelled",
-    "rejected",
-    "failed",
-    "expired",
-    "unconfirmed",
-}
-
-
 def upsert_cashflows(
     records: List[Dict[str, Any]],
     flow_type: str,
@@ -1392,7 +1558,7 @@ def upsert_cashflows(
     count = 0
     with get_db_connection(db_path) as conn:
         cursor = conn.cursor()
-        for idx, r in enumerate(records):
+        for r in records:
             if not isinstance(r, dict):
                 continue
             tx_obj = r.get("transaction") if isinstance(r.get("transaction"), dict) else {}

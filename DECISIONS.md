@@ -23,6 +23,7 @@ This document records the key architectural, financial, and UX decisions made th
 12. [ADR-012: اصل حریم خصوصی ۱۰۰٪ آفلاین و عدم وابستگی به اینترنت یا CDN](#adr-012-offline-first-architecture-and-zero-external-telemetry)
 13. [ADR-013: ایزولاسیون کامل نمودار رشد سرمایه اسپات](#adr-013-spot-equity-curve-isolation-and-elimination-of-fiat-cashflow-distortion)
 14. [ADR-014: مدیریت سقف ۱۸۰ روزه API، برداشت رمزارز در WAC، همگام‌سازی سفارش/معامله و نقدینگی کامل اسپات](#adr-014-180-day-api-cutoff-handling-crypto-withdrawal-wac-replay-marginspot-sync-integrity--spot-cash-completeness)
+15. [ADR-015: سخت‌سازی امنیتی لوکال‌هاست، مدیریت چرخه حیات SQLite، همزمانی Async/WS و ماژولارسازی بدون بیلد فرانت‌اند](#adr-015-localhost-security-boundaries-sqlite-connection-lifecycle-async-concurrency--zero-build-modular-frontend)
 
 ---
 
@@ -207,3 +208,24 @@ This document records the key architectural, financial, and UX decisions made th
   - فروش‌های فاقد تاریخچه خرید (`unmatched_sells`) را وارد آمار یا روزهای تقویم نکنید.
   - برداشت‌های رمزارز را از بازپخش WAC حذف نکنید.
   - کرسر سفارش‌ها را دوباره به `MAX(orders.id)` برنگردانید و `past_positions` را هرگز به نرخ برد روزهای فقط-خرید یا نمودار اسپات مخلوط نکنید.
+
+---
+
+### ADR-015: Localhost Security Boundaries, SQLite Connection Lifecycle, Async Concurrency & Zero-Build Modular Frontend
+### سخت‌سازی امنیتی لوکال‌هاست، مدیریت چرخه حیات SQLite، همزمانی Async/WS و ماژولارسازی بدون بیلد فرانت‌اند
+
+- **وضعیت / Status:** پذیرفته شده و نهایی (Accepted & Enforced)
+- **زمینه و مشکل (Context):**
+  1. وب‌سوکت `/ws` پیش از این هدر `Origin` را بررسی نمی‌کرد (آسیب‌پذیری CSWSH با امکان شنود سفارش‌ها و معاملات خصوصی از تب‌های مخرب مرورگر) و اندپوینت‌های `TRADE` در برابر DNS Rebinding، ارسال `{}` بدون فیلتر به `cancel-old` و اعداد غیراستاندارد (`inf`/`nan`/نماد علمی `1e-05`) محافظت نشده بودند.
+  2. در پایتون، بلوک `with sqlite3.Connection` فقط commit/rollback می‌کند و `conn.close()` را صدا نمی‌زند؛ در نتیجه کانکشن‌های SQLite تا زمان GC باز می‌ماندند (نشت FD و رشد فایل `-wal`). همچنین نبود ایندکس روی `trades(order_id)` و `positions` و بارگذاری کامل جدول `orders` در `upsert_trades` باعث اسکن‌های تکراری می‌شد.
+  3. اشتراک‌گذاری یک `requests.Session` بین تردهای همزمان، نبود قفل روی `sync_status` و `_open_orders_cache`، ارسال ترتیبی بدون تایم‌اوت در `_broadcast` وب‌سوکت و نبود cooldown روی فراخوانی‌های on-demand در `/api/positions` و `/api/analytics/equity-curve` خطر خطاهای همزمانی و مصرف سهمیه API را ایجاد می‌کرد.
+  4. در فرانت‌اند، نگهداری تمام منطق JS در یک بلوک ۳,۳۸۲ خطی داخل `index.html` باعث تکرار کد، نبود `AbortController` برای جلوگیری از Race Condition و نشت تایمر/AudioContext شده بود. در عین حال، بازنویسی به React به دلیل نقض `ADR-012` (نیاز به Node/npm/Vite و شکست سادگی `uv sync && uv run nob-web`) گزینه مناسبی نبود.
+- **تصمیم اتخاذ شده (Decision):**
+  1. **امنیت لوکال‌هاست:** اعتبارسنجی `Origin` روی `/ws` (رد درخواست‌های cross-origin با کد `1008`)، افزودن `TrustedHostMiddleware` و بررسی `Origin` روی درخواست‌های تغییردهنده (`POST`/`PUT`/`DELETE`)، الزام فیلتر یا `confirm_all=true` در `cancel-old`، اعتبارسنجی `page`/`page_size`/`resolution`/`symbol` و فرمت‌دهی `Decimal` بدون نماد علمی.
+  2. **چرخه حیات SQLite و ایندکس‌ها:** تبدیل `get_db_connection()` به `@contextmanager` با `conn.close()` تضمینی در `finally`، افزودن ۶ ایندکس ثانویه، تراکنش اتمیک برای `reconcile_open_orders`، بچ‌بندی `IN (...)`، یکپارچه‌سازی `get_stats` در یک کوئری و استریم‌کردن `/api/export/csv`.
+  3. **همزمانی و انعطاف‌پذیری:** ایزوله‌سازی `requests.Session` با `threading.local()`، قفل‌گذاری `sync_status` و `_open_orders_cache`، broadcast همزمان با تایم‌اوت ۲ ثانیه و تسک پس‌زمینه برای flush قیمت‌ها در `ws_bridge.py`، سقف ۲۰ اشتراک کندل به ازای هر کلاینت، cooldown ده دقیقه‌ای برای fetchهای on-demand و یکپارچه‌سازی بازپخش WAC در `_replay_symbol_wac` بدون تغییر (immutability) روی دیکشنری‌های ورودی `calculate_positions_summary`.
+  4. **ماژولارسازی بدون بیلد (Zero-Build ES Modules) و تست جامع:** تفکیک منطق فرانت‌اند به ماژول‌های آفلاین `src/nob/static/js/{api,utils,calendar,calculator,ws}.js` (حفظ Vue 3 و `ADR-012`)، افزودن `tests/` با `pytest` (۳۰ تست واحد و امنیتی) و مستثنی‌سازی `vendor/` در `.graphifyignore`.
+- **⛔ هشدار - بازنگردید (DO NOT REVERT):**
+  - هیچ‌گاه `conn.close()` را از `get_db_connection()` یا بررسی `Origin` را از `/ws` و اندپوینت‌های `TRADE` حذف نکنید.
+  - فرانت‌اند را بدون دلیل قانع‌کننده به toolchainهای وابسته به Node/Vite/React منتقل نکنید تا سادگی اجرای تک‌دستوری پایتون (`ADR-012`) حفظ شود.
+  - پیش از هر تغییر در محاسبات مالی یا API، مجموعه تست `pytest` و `ruff check` را اجرا و سبز نگه دارید.

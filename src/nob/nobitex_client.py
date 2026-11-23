@@ -179,24 +179,42 @@ def load_credentials(env_path: Optional[Path] = None) -> tuple[str, str]:
     return api_key, secret
 
 
-def sign_request(secret_b64: str, method: str, full_path: str, raw_body: str = "") -> tuple[str, str]:
+def parse_private_key(secret_b64: str) -> Ed25519PrivateKey:
+    """Decode a URL-safe base64 Ed25519 secret into a private key object."""
+    try:
+        secret_clean = (secret_b64 or "").strip()
+        if not secret_clean:
+            raise ValueError("Empty secret")
+        padding = len(secret_clean) % 4
+        if padding:
+            secret_clean += "=" * (4 - padding)
+        private_key_bytes = base64.urlsafe_b64decode(secret_clean)
+        return Ed25519PrivateKey.from_private_bytes(private_key_bytes)
+    except Exception as exc:
+        raise NobitexAuthError(
+            401,
+            "InvalidSecret",
+            "Configured SECRET is not a valid base64-encoded Ed25519 private key.",
+        ) from exc
+
+
+def sign_request(
+    secret_b64: str,
+    method: str,
+    full_path: str,
+    raw_body: str = "",
+    private_key: Optional[Ed25519PrivateKey] = None,
+) -> Tuple[str, str]:
     """
-    Generate Ed25519 signature per Nobitex specifications:
+    Generate Nobitex-Signature and Nobitex-Timestamp using Ed25519.
     payload = timestamp + METHOD + full_path + raw_body
     Returns (signature_urlsafe_b64, timestamp).
     """
     timestamp = str(int(time.time()))
     payload = f"{timestamp}{method.upper()}{full_path}{raw_body}".encode("utf-8")
 
-    # Ensure padding for base64 decode
-    secret_clean = secret_b64.strip()
-    padding = len(secret_clean) % 4
-    if padding:
-        secret_clean += "=" * (4 - padding)
-
-    private_key_bytes = base64.urlsafe_b64decode(secret_clean)
-    private_key = Ed25519PrivateKey.from_private_bytes(private_key_bytes)
-    raw_signature = private_key.sign(payload)
+    key = private_key if private_key is not None else parse_private_key(secret_b64)
+    raw_signature = key.sign(payload)
     signature_b64 = base64.urlsafe_b64encode(raw_signature).decode("utf-8")
 
     return signature_b64, timestamp
@@ -226,16 +244,55 @@ class NobitexClient:
         self.api_key = api_key
         self.secret = secret
         self.base_url = base_url.rstrip("/")
-        self.session = requests.Session()
+        self._thread_local = threading.local()
+        self._sessions_lock = threading.Lock()
+        self._sessions: List[requests.Session] = []
+        self._override_session: Optional[requests.Session] = None
+        self._cached_private_key: Optional[Ed25519PrivateKey] = None
+        self._cached_secret_value: Optional[str] = None
+        self._key_lock = threading.Lock()
         self._sleep = sleep_fn
         self._rate_limiter = _EndpointRateLimiter(clock_fn=clock_fn, sleep_fn=sleep_fn)
 
+    @property
+    def session(self) -> requests.Session:
+        """Return a thread-local requests.Session (or an explicitly injected test session)."""
+        if self._override_session is not None:
+            return self._override_session
+        sess = getattr(self._thread_local, "session", None)
+        if sess is None:
+            sess = requests.Session()
+            self._thread_local.session = sess
+            with self._sessions_lock:
+                self._sessions.append(sess)
+        return sess
+
+    @session.setter
+    def session(self, value: Optional[requests.Session]) -> None:
+        self._override_session = value
+
+    def _get_private_key(self) -> Ed25519PrivateKey:
+        with self._key_lock:
+            if self._cached_private_key is None or self._cached_secret_value != self.secret:
+                self._cached_private_key = parse_private_key(self.secret)
+                self._cached_secret_value = self.secret
+            return self._cached_private_key
+
     def close(self) -> None:
-        """Close underlying HTTP session."""
-        try:
-            self.session.close()
-        except Exception:
-            pass
+        """Close all thread-local HTTP sessions created by this client."""
+        with self._sessions_lock:
+            sessions = list(self._sessions)
+            self._sessions.clear()
+        if self._override_session is not None:
+            sessions.append(self._override_session)
+            self._override_session = None
+        if hasattr(self._thread_local, "session"):
+            delattr(self._thread_local, "session")
+        for sess in sessions:
+            try:
+                sess.close()
+            except Exception:
+                pass
 
     def __enter__(self) -> "NobitexClient":
         return self
@@ -295,7 +352,13 @@ class NobitexClient:
                 headers["Content-Type"] = "application/json"
 
             if auth:
-                sig, ts = sign_request(self.secret, method_upper, full_path, raw_body)
+                sig, ts = sign_request(
+                    self.secret,
+                    method_upper,
+                    full_path,
+                    raw_body,
+                    private_key=self._get_private_key(),
+                )
                 headers["Nobitex-Key"] = self.api_key
                 headers["Nobitex-Signature"] = sig
                 headers["Nobitex-Timestamp"] = ts
@@ -520,17 +583,6 @@ class NobitexClient:
             params["dstCurrency"] = dst_currency.lower()
         data = self._request("GET", "/market/stats", params=params, auth=False, timeout=15.0)
         return data.get("stats", {})
-
-    def fetch_positions(
-        self, status: str = "active", page: int = 1, page_size: int = 100
-    ) -> List[Dict[str, Any]]:
-        """
-        Fetch a single page of leveraged margin positions from /positions/list.
-        status can be 'active' (open positions) or 'past' (closed/liquidated positions).
-        """
-        params = {"status": status, "page": int(page), "pageSize": min(int(page_size), 100)}
-        data = self._request("GET", "/positions/list", params=params, auth=True, timeout=15.0)
-        return data.get("positions", [])
 
     def fetch_all_positions(
         self,
@@ -877,20 +929,6 @@ class NobitexClient:
         return self._request(
             "POST",
             "/users/portfolio/last-week-daily-profit",
-            body_dict=body,
-            auth=True,
-            timeout=20.0,
-        )
-
-    def fetch_portfolio_daily_total_profit(self, monthly: bool = True) -> Dict[str, Any]:
-        """
-        Fetch Nobitex daily total portfolio profit via POST /users/portfolio/last-week-daily-total-profit.
-        Pass monthly=True for the last 30 days (otherwise last 7 days). Rate limit: 10 / 3 min.
-        """
-        body = {"monthly": True} if monthly else {}
-        return self._request(
-            "POST",
-            "/users/portfolio/last-week-daily-total-profit",
             body_dict=body,
             auth=True,
             timeout=20.0,
