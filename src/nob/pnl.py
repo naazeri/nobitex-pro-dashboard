@@ -3,7 +3,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import List, Dict, Any, Optional, Tuple
 from collections import defaultdict
 
-from nob.time_utils import IRST, iso_to_irst_date_str
+from nob.time_utils import IRST, iso_to_irst_date_str, now_irst
 
 TEHRAN_TZ = IRST
 
@@ -15,6 +15,71 @@ EPSILON_QTY = Decimal("1e-9")
 EPSILON_PNL = Decimal("0.001")
 EPSILON_DAY = Decimal("0.005")
 EPSILON_ALLOC = Decimal("0.01")
+
+_EXCLUDED_CASHFLOW_STATUSES = {
+    "canceled",
+    "cancelled",
+    "rejected",
+    "failed",
+    "expired",
+    "unconfirmed",
+}
+
+
+def _iso_epoch(ts: Any) -> float:
+    """Parse an ISO-8601 timestamp into UTC epoch seconds for deterministic event sorting."""
+    if not ts:
+        return 0.0
+    try:
+        dt = datetime.datetime.fromisoformat(str(ts).strip().replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=datetime.timezone.utc)
+        return dt.timestamp()
+    except Exception:
+        return 0.0
+
+
+def _extract_crypto_cashflow_events(
+    cashflows: Optional[List[Dict[str, Any]]],
+) -> Tuple[Dict[str, Decimal], Dict[str, List[Dict[str, Any]]]]:
+    """
+    Aggregate net externally deposited quantities and confirmed crypto withdrawal events
+    per non-cash crypto symbol, skipping canceled/rejected/unconfirmed rows.
+    """
+    ext_deposited_by_symbol: Dict[str, Decimal] = defaultdict(lambda: ZERO)
+    withdrawals_by_symbol: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    excluded_cash = {"RLS", "USDT", "DAI", "IRR", "IRT"}
+    for cf in (cashflows or []):
+        status_cf = str(cf.get("status") or "").strip().lower()
+        if status_cf in _EXCLUDED_CASHFLOW_STATUSES:
+            continue
+        curr = str(cf.get("currency", "")).strip().upper()
+        if not curr or curr in excluded_cash:
+            continue
+        ftype = str(cf.get("flow_type", "")).strip().lower()
+        amt = D(cf.get("amount"))
+        if amt <= ZERO:
+            continue
+        if ftype == "deposit":
+            ext_deposited_by_symbol[curr] += amt
+        elif ftype == "withdraw":
+            ext_deposited_by_symbol[curr] -= amt
+            withdrawals_by_symbol[curr].append(cf)
+    return ext_deposited_by_symbol, withdrawals_by_symbol
+
+
+def _merge_symbol_events(
+    symbol_trades: List[Dict[str, Any]],
+    symbol_withdrawals: List[Dict[str, Any]],
+) -> List[Tuple[str, Dict[str, Any]]]:
+    """Return ('trade' | 'withdraw', record) sorted chronologically (trades before withdrawals on ties)."""
+    tagged: List[Tuple[float, int, str, str, Dict[str, Any]]] = []
+    for t in symbol_trades:
+        tagged.append((_iso_epoch(t.get("timestamp")), 0, str(t.get("id", "")), "trade", t))
+    for w in symbol_withdrawals:
+        tagged.append((_iso_epoch(w.get("timestamp")), 1, str(w.get("id", "")), "withdraw", w))
+    tagged.sort(key=lambda item: (item[0], item[1], item[2]))
+    return [(kind, rec) for _, _, _, kind, rec in tagged]
 
 
 def D(val: Any, default: str = "0") -> Decimal:
@@ -189,20 +254,8 @@ def calculate_portfolio(
             if quote in ("USDT", "RLS", "IRR", "IRT") and base not in {"RLS", "USDT", "DAI", "IRR", "IRT"}:
                 trades_by_symbol[base].append(t)
 
-    # Track net externally deposited quantities per crypto symbol (to distinguish external deposits from missing trade history)
-    ext_deposited_by_symbol: Dict[str, Decimal] = defaultdict(lambda: ZERO)
-    for cf in (cashflows or []):
-        curr = str(cf.get("currency", "")).strip().upper()
-        if not curr or curr in {"RLS", "USDT", "DAI", "IRR", "IRT"}:
-            continue
-        ftype = str(cf.get("flow_type", "")).strip().lower()
-        amt = D(cf.get("amount"))
-        if amt <= ZERO:
-            continue
-        if ftype == "deposit":
-            ext_deposited_by_symbol[curr] += amt
-        elif ftype == "withdraw":
-            ext_deposited_by_symbol[curr] -= amt
+    # Track net externally deposited quantities & chronological crypto withdrawal events per symbol
+    ext_deposited_by_symbol, withdrawals_by_symbol = _extract_crypto_cashflow_events(cashflows)
 
     # All unique symbols to evaluate
     all_symbols = set(trades_by_symbol.keys())
@@ -217,12 +270,15 @@ def calculate_portfolio(
     total_fees_usdt = ZERO
     total_crypto_value = ZERO
     total_invested_capital = ZERO
+    total_ignored_unmatched_sells = 0
 
     trades_timeline = defaultdict(lambda: {"buys": 0, "sells": 0, "volume": ZERO})
 
     for symbol in sorted(all_symbols):
-        symbol_trades = trades_by_symbol.get(symbol, [])
-        symbol_trades.sort(key=lambda x: str(x.get("timestamp", "")))
+        symbol_events = _merge_symbol_events(
+            trades_by_symbol.get(symbol, []),
+            withdrawals_by_symbol.get(symbol, []),
+        )
 
         current_qty = ZERO
         avg_cost = ZERO
@@ -233,9 +289,21 @@ def calculate_portfolio(
         total_sold_qty = ZERO
         total_sold_revenue = ZERO
         in_range_trades_count = 0
+        ignored_unmatched_sells = 0
         used_approx_rls = False
 
-        for t in symbol_trades:
+        for kind, ev in symbol_events:
+            if kind == "withdraw":
+                amt_w = D(ev.get("amount"))
+                if amt_w > ZERO:
+                    removed = min(current_qty, amt_w)
+                    current_qty -= removed
+                    if current_qty <= EPSILON_QTY:
+                        current_qty = ZERO
+                        avg_cost = ZERO
+                continue
+
+            t = ev
             trade_type = str(t.get("type", "")).lower()
             market = str(t.get("market", "")).upper()
             quote = market.split("-", 1)[1] if "-" in market else "USDT"
@@ -280,28 +348,32 @@ def calculate_portfolio(
                 fee_usdt_opt, _ = _convert_quote_to_usdt(fee_raw, quote, usdt_rls_rate)
                 fee_usdt = fee_usdt_opt if fee_usdt_opt is not None else ZERO
 
-                # Always replay inventory against full history
+                # Always replay inventory against full history; ignore unmatched pre-180d sells completely
                 matched_qty = min(current_qty, amount)
-                trade_pnl = ZERO
-                if matched_qty > ZERO and avg_cost > ZERO:
-                    matched_cost = matched_qty * avg_cost
-                    matched_revenue = matched_qty * price
-                    prop_fee = (fee_usdt * (matched_qty / amount)) if amount > ZERO else ZERO
-                    trade_pnl = matched_revenue - matched_cost - prop_fee
-                    current_qty -= matched_qty
-                    if current_qty <= EPSILON_QTY:
-                        current_qty = ZERO
-                        avg_cost = ZERO
+                if matched_qty <= EPSILON_QTY or avg_cost <= ZERO:
+                    if in_window:
+                        ignored_unmatched_sells += 1
+                    continue
+
+                ratio = (matched_qty / amount) if amount > ZERO else ZERO
+                matched_cost = matched_qty * avg_cost
+                matched_revenue = matched_qty * price
+                prop_fee = fee_usdt * ratio
+                trade_pnl = matched_revenue - matched_cost - prop_fee
+                current_qty -= matched_qty
+                if current_qty <= EPSILON_QTY:
+                    current_qty = ZERO
+                    avg_cost = ZERO
 
                 if in_window:
-                    asset_fees_usdt += fee_usdt
-                    total_sold_qty += amount
-                    total_sold_revenue += total
+                    asset_fees_usdt += prop_fee
+                    total_sold_qty += matched_qty
+                    total_sold_revenue += matched_revenue
                     realized_pnl += trade_pnl
                     in_range_trades_count += 1
                     if len(d_str) >= 7:
                         trades_timeline[d_str[:7]]["sells"] += 1
-                        trades_timeline[d_str[:7]]["volume"] += total
+                        trades_timeline[d_str[:7]]["volume"] += matched_revenue
 
         # Check actual spot wallet balance if available
         wallet_entry = spot_wallet_map.get(symbol)
@@ -342,14 +414,45 @@ def calculate_portfolio(
                 day_low = D(rls_stat.get("dayLow")) / usdt_rls_rate
 
         current_value = holding_qty * current_price
+        ext_dep_qty = max(ZERO, ext_deposited_by_symbol.get(symbol, ZERO))
 
-        # Unrealized PnL (USDT)
-        if holding_qty > ZERO and avg_cost > ZERO and current_price > ZERO:
-            unrealized_pnl = (current_price - avg_cost) * holding_qty
-            pnl_pct = ((current_price - avg_cost) / avg_cost) * HUNDRED
-        else:
+        # Reconcile tracked cost-basis quantity vs untracked pre-180d wallet quantity
+        if holding_qty <= EPSILON_QTY:
+            avg_cost = ZERO
+            cost_tracked_qty = ZERO
+            untracked_qty = ZERO
             unrealized_pnl = ZERO
             pnl_pct = ZERO
+            cost_basis_source = "flat"
+        elif avg_cost > ZERO:
+            excess_qty = max(ZERO, holding_qty - current_qty)
+            is_partial = (
+                current_qty > EPSILON_QTY
+                and excess_qty > (current_qty * Decimal("0.02"))
+                and (excess_qty * current_price) > ONE
+            )
+            if is_partial:
+                cost_tracked_qty = current_qty
+                untracked_qty = excess_qty
+                cost_basis_source = "partial_history"
+            else:
+                cost_tracked_qty = holding_qty
+                untracked_qty = ZERO
+                cost_basis_source = "trades"
+
+            if current_price > ZERO:
+                unrealized_pnl = (current_price - avg_cost) * cost_tracked_qty
+                pnl_pct = ((current_price - avg_cost) / avg_cost) * HUNDRED
+            else:
+                unrealized_pnl = ZERO
+                pnl_pct = ZERO
+            total_invested_capital += cost_tracked_qty * avg_cost
+        else:
+            cost_tracked_qty = ZERO
+            untracked_qty = holding_qty
+            unrealized_pnl = ZERO
+            pnl_pct = ZERO
+            cost_basis_source = "external_deposit" if ext_dep_qty > EPSILON_QTY else "missing_history"
 
         asset_total_pnl = realized_pnl + unrealized_pnl
 
@@ -357,24 +460,15 @@ def calculate_portfolio(
         total_unrealized_pnl += unrealized_pnl
         total_fees_usdt += asset_fees_usdt
         total_crypto_value += current_value
-        if holding_qty > ZERO and avg_cost > ZERO:
-            total_invested_capital += holding_qty * avg_cost
-
-        ext_dep_qty = max(ZERO, ext_deposited_by_symbol.get(symbol, ZERO))
-        if holding_qty <= EPSILON_QTY:
-            cost_basis_source = "flat"
-        elif avg_cost > ZERO:
-            cost_basis_source = "trades"
-        elif ext_dep_qty > EPSILON_QTY:
-            cost_basis_source = "external_deposit"
-        else:
-            cost_basis_source = "missing_history"
+        total_ignored_unmatched_sells += ignored_unmatched_sells
 
         holdings[symbol] = {
             "symbol": symbol,
             "market": f"{symbol}-USDT",
             "quantity": _to_float(holding_qty),
             "active_quantity": _to_float(active_balance),
+            "cost_tracked_qty": _to_float(cost_tracked_qty),
+            "untracked_qty": _to_float(untracked_qty),
             "avg_cost": _to_float(avg_cost),
             "current_price": _to_float(current_price),
             "current_value": _to_float(current_value),
@@ -387,6 +481,7 @@ def calculate_portfolio(
             "day_low": _to_float(day_low),
             "fees_paid_usdt": _to_float(asset_fees_usdt),
             "trades_count": in_range_trades_count,
+            "ignored_unmatched_sells": ignored_unmatched_sells,
             "total_bought_qty": _to_float(total_bought_qty),
             "total_bought_cost": _to_float(total_bought_cost),
             "total_sold_qty": _to_float(total_sold_qty),
@@ -397,12 +492,16 @@ def calculate_portfolio(
             "cost_basis_source": cost_basis_source,
         }
 
-    # Spot USDT & DAI cash reserves
+    # Spot USDT, DAI & RLS/IRT cash reserves
     usdt_wallet = spot_wallet_map.get("USDT", {})
     usdt_cash = D(usdt_wallet.get("balance"))
 
     dai_wallet = spot_wallet_map.get("DAI", {})
     dai_cash = D(dai_wallet.get("balance"))
+
+    rls_wallet = spot_wallet_map.get("RLS", {})
+    rls_cash = D(rls_wallet.get("balance"))
+    rls_cash_usdt = (rls_cash / usdt_rls_rate) if (rls_cash > ZERO and usdt_rls_rate > ZERO) else ZERO
 
     # Margin USDT cash (active_balance = free margin USDT, avoiding double-counting locked collateral)
     margin_usdt_wallet = margin_wallet_map.get("USDT", {})
@@ -412,7 +511,7 @@ def calculate_portfolio(
         default=str(margin_usdt_total),
     )
 
-    total_portfolio_value = total_crypto_value + usdt_cash + dai_cash
+    total_portfolio_value = total_crypto_value + usdt_cash + dai_cash + rls_cash_usdt
     total_pnl = total_realized_pnl + total_unrealized_pnl
 
     overall_pnl_pct = (
@@ -424,8 +523,9 @@ def calculate_portfolio(
     active_holdings = [h for h in holdings.values() if h["current_value"] >= 1.0]
     dust_holdings = [h for h in holdings.values() if h["current_value"] < 1.0]
 
-    best_performer = max(active_holdings, key=lambda x: x["pnl_pct"]) if active_holdings else None
-    worst_performer = min(active_holdings, key=lambda x: x["pnl_pct"]) if active_holdings else None
+    priced_active = [h for h in active_holdings if h["avg_cost"] > 0]
+    best_performer = max(priced_active, key=lambda x: x["pnl_pct"]) if priced_active else None
+    worst_performer = min(priced_active, key=lambda x: x["pnl_pct"]) if priced_active else None
 
     allocation_items = []
     if usdt_cash > EPSILON_ALLOC:
@@ -433,6 +533,18 @@ def calculate_portfolio(
             "symbol": "USDT",
             "value": _to_float(usdt_cash, 2),
             "color": "#10b981",
+        })
+    if dai_cash > EPSILON_ALLOC:
+        allocation_items.append({
+            "symbol": "DAI",
+            "value": _to_float(dai_cash, 2),
+            "color": "#f59e0b",
+        })
+    if rls_cash_usdt > EPSILON_ALLOC:
+        allocation_items.append({
+            "symbol": "IRT",
+            "value": _to_float(rls_cash_usdt, 2),
+            "color": "#06b6d4",
         })
 
     sorted_cryptos = sorted(
@@ -478,6 +590,9 @@ def calculate_portfolio(
             "total_crypto_value": _to_float(total_crypto_value, 2),
             "usdt_cash": _to_float(usdt_cash, 2),
             "dai_cash": _to_float(dai_cash, 2),
+            "rls_cash": _to_float(rls_cash, 0),
+            "irt_cash": int(_round_dec(rls_cash / TEN, 0)),
+            "rls_cash_usdt": _to_float(rls_cash_usdt, 2),
             "margin_usdt_cash": _to_float(margin_usdt_cash, 2),
             "margin_usdt_total": _to_float(margin_usdt_total, 2),
             "total_invested_capital": _to_float(total_invested_capital, 2),
@@ -489,6 +604,7 @@ def calculate_portfolio(
             "active_assets_count": len(active_holdings),
             "dust_assets_count": len(dust_holdings),
             "total_assets_count": len(holdings),
+            "ignored_unmatched_sells_count": total_ignored_unmatched_sells,
             "best_performer": best_performer,
             "worst_performer": worst_performer,
             "from_date": effective_from,
@@ -648,17 +764,37 @@ def calculate_positions_summary(
             close_fee = val_exit * rate
 
         # --- 3. Extension / Auto-Renewal Fee ---
-        ext_fee = D(p.get("extension_fee") if p.get("extension_fee") not in (None, "") else p.get("extensionFee"))
-        if ext_fee <= ZERO and closed_at and opened_at:
-            try:
-                t_o = datetime.datetime.fromisoformat(opened_at)
-                t_c = datetime.datetime.fromisoformat(closed_at)
-                dur_hours = (t_c - t_o).total_seconds() / 3600.0
-                periods = Decimal(int(dur_hours // 8))
-                liability = collat * max(ZERO, lev - ONE)
-                ext_fee = periods * ext_rate * liability
-            except Exception:
-                ext_fee = ZERO
+        # Note: On Open positions, Nobitex `/positions/list` reports `extensionFee` as the per-8h fee rate,
+        # charged separately as `tp='fee'` wallet deductions every 8h; neither Open `unrealizedPNL` nor
+        # closed `PNL` deducts extension fees, while trading open/close fees and poolPNLShare ARE already
+        # deducted inside Nobitex's PNL / unrealizedPNL.
+        api_ext_val = D(p.get("extension_fee") if p.get("extension_fee") not in (None, "") else p.get("extensionFee"))
+        ext_fee_per_period = api_ext_val if status == "Open" else ZERO
+        if status == "Open":
+            if api_ext_val > ZERO and opened_at:
+                try:
+                    t_o = datetime.datetime.fromisoformat(str(opened_at).replace("Z", "+00:00"))
+                    if t_o.tzinfo is None:
+                        t_o = t_o.replace(tzinfo=datetime.timezone.utc)
+                    dur_hours = max(0.0, (now_irst() - t_o).total_seconds() / 3600.0)
+                    periods = Decimal(max(1, int(dur_hours // 8)))
+                    ext_fee = periods * api_ext_val
+                except Exception:
+                    ext_fee = api_ext_val
+            else:
+                ext_fee = max(ZERO, api_ext_val)
+        else:
+            ext_fee = api_ext_val
+            if ext_fee <= ZERO and closed_at and opened_at:
+                try:
+                    t_o = datetime.datetime.fromisoformat(str(opened_at).replace("Z", "+00:00"))
+                    t_c = datetime.datetime.fromisoformat(str(closed_at).replace("Z", "+00:00"))
+                    dur_hours = max(0.0, (t_c - t_o).total_seconds() / 3600.0)
+                    periods = Decimal(int(dur_hours // 8))
+                    liability = collat * max(ZERO, lev - ONE)
+                    ext_fee = periods * ext_rate * liability
+                except Exception:
+                    ext_fee = ZERO
 
         # Quantize individual position fee figures
         if dst == "usdt":
@@ -670,6 +806,7 @@ def calculate_positions_summary(
             p["open_fee"] = float(open_fee_q)
             p["close_fee"] = float(close_fee_q)
             p["extension_fee"] = float(ext_fee_q)
+            p["extension_fee_per_period"] = float(_round_dec(ext_fee_per_period, 4))
             p["total_fee"] = float(total_fee_q)
 
             total_fees_usdt += total_fee_q
@@ -685,6 +822,7 @@ def calculate_positions_summary(
             p["open_fee"] = int(open_fee_q)
             p["close_fee"] = int(close_fee_q)
             p["extension_fee"] = int(ext_fee_q)
+            p["extension_fee_per_period"] = int(_round_dec(ext_fee_per_period, 0))
             p["total_fee"] = int(total_fee_q)
 
             total_fees_rls += total_fee_q
@@ -692,14 +830,13 @@ def calculate_positions_summary(
             total_close_fees_rls += close_fee_q
             total_extension_fees_rls += ext_fee_q
 
-        # Calculate TRUE NET PnL after deducting all fees and profit-share
-        gross_pnl = D(p.get("pnl") if p.get("pnl") not in (None, "") else p.get("PNL"))
+        # True Net PnL: Nobitex API PNL/unrealizedPNL already excludes open/close fees and poolPNLShare;
+        # only extensionFee must be deducted here to avoid double-deducting trading fees or pool share.
+        api_pnl = D(p.get("pnl") if p.get("pnl") not in (None, "") else p.get("PNL"))
         pool_share = D(p.get("pool_pnl_share") if p.get("pool_pnl_share") not in (None, "") else p.get("poolPNLShare"))
 
-        if status == "Open":
-            net_pnl = gross_pnl - total_fee_q
-        else:
-            net_pnl = gross_pnl - pool_share - total_fee_q
+        net_pnl = api_pnl - ext_fee_q
+        gross_pnl = (api_pnl + open_fee_q) if status == "Open" else (api_pnl + pool_share + open_fee_q + close_fee_q)
 
         net_pnl_percent = (net_pnl / collat * HUNDRED) if collat > ZERO else ZERO
 
@@ -824,10 +961,12 @@ def calculate_daily_pnl_calendar(
     from_date: Optional[str] = None,
     to_date: Optional[str] = None,
     since_date: Optional[str] = None,
+    cashflows: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """
     Calculate daily realized PnL breakdown across Spot and Futures using Decimal arithmetic.
     Maps each trading day to its spot sells, futures closed positions, fees, volume, and net profit.
+    Replays confirmed crypto withdrawals chronologically and completely ignores unmatched pre-180d sells.
     """
     effective_from = from_date or (since_date if since_date and since_date != "all" else None)
     to_cutoff = to_date[:10] if to_date else None
@@ -856,8 +995,9 @@ def calculate_daily_pnl_calendar(
     })
 
     usdt_rls_rate = _get_usdt_rls_rate(market_stats)
+    _, withdrawals_by_symbol = _extract_crypto_cashflow_events(cashflows)
 
-    # 1. Process Spot Trades Chronologically per Asset for WAC Realized PnL
+    # 1. Process Spot Trades & Withdrawals Chronologically per Asset for WAC Realized PnL
     by_symbol: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for t in trades:
         market = str(t.get("market", "")).upper()
@@ -867,8 +1007,20 @@ def calculate_daily_pnl_calendar(
     for symbol, symbol_trades in by_symbol.items():
         current_qty = ZERO
         avg_cost = ZERO
+        symbol_events = _merge_symbol_events(symbol_trades, withdrawals_by_symbol.get(symbol, []))
 
-        for t in sorted(symbol_trades, key=lambda x: str(x.get("timestamp", ""))):
+        for kind, ev in symbol_events:
+            if kind == "withdraw":
+                amt_w = D(ev.get("amount"))
+                if amt_w > ZERO:
+                    removed = min(current_qty, amt_w)
+                    current_qty -= removed
+                    if current_qty <= EPSILON_QTY:
+                        current_qty = ZERO
+                        avg_cost = ZERO
+                continue
+
+            t = ev
             ttype = str(t.get("type", "")).lower()
             market = str(t.get("market", "")).upper()
             quote = market.split("-", 1)[1] if "-" in market else "USDT"
@@ -904,47 +1056,45 @@ def calculate_daily_pnl_calendar(
                 fee_usdt = fee_usdt_opt if fee_usdt_opt is not None else ZERO
                 matched_qty = min(current_qty, amount)
 
-                if matched_qty > ZERO and avg_cost > ZERO:
-                    entry_avg_cost = avg_cost
-                    matched_cost = matched_qty * entry_avg_cost
-                    matched_revenue = matched_qty * price
-                    prop_fee = (fee_usdt * (matched_qty / amount)) if amount > ZERO else ZERO
-                    trade_pnl = matched_revenue - matched_cost - prop_fee
+                if matched_qty <= EPSILON_QTY or avg_cost <= ZERO:
+                    continue
 
-                    current_qty -= matched_qty
-                    if current_qty <= EPSILON_QTY:
-                        current_qty = ZERO
-                        avg_cost = ZERO
+                ratio = (matched_qty / amount) if amount > ZERO else ZERO
+                entry_avg_cost = avg_cost
+                matched_cost = matched_qty * entry_avg_cost
+                matched_revenue = matched_qty * price
+                prop_fee = fee_usdt * ratio
+                trade_pnl = matched_revenue - matched_cost - prop_fee
 
-                    if is_in_range(date_str):
-                        daily_stats[date_str]["date"] = date_str
-                        daily_stats[date_str]["spot_pnl"] += trade_pnl
-                        daily_stats[date_str]["volume_usdt"] += total
-                        daily_stats[date_str]["fees_usdt"] += fee_usdt
-                        pnl_pct_val = (
-                            ((price - entry_avg_cost) / entry_avg_cost * HUNDRED)
-                            if entry_avg_cost > ZERO
-                            else ZERO
-                        )
-                        daily_stats[date_str]["spot_trades"].append({
-                            "id": t.get("id"),
-                            "order_id": t.get("order_id"),
-                            "market": t.get("market"),
-                            "symbol": symbol,
-                            "type": "sell",
-                            "price": _to_float(price),
-                            "amount": _to_float(amount),
-                            "total": _to_float(total),
-                            "fee": _to_float(fee_raw),
-                            "pnl": _to_float(trade_pnl, 2),
-                            "pnl_pct": _to_float(pnl_pct_val, 1),
-                            "timestamp": ts,
-                        })
-                else:
-                    if is_in_range(date_str):
-                        daily_stats[date_str]["date"] = date_str
-                        daily_stats[date_str]["volume_usdt"] += total
-                        daily_stats[date_str]["fees_usdt"] += fee_usdt
+                current_qty -= matched_qty
+                if current_qty <= EPSILON_QTY:
+                    current_qty = ZERO
+                    avg_cost = ZERO
+
+                if is_in_range(date_str):
+                    daily_stats[date_str]["date"] = date_str
+                    daily_stats[date_str]["spot_pnl"] += trade_pnl
+                    daily_stats[date_str]["volume_usdt"] += matched_revenue
+                    daily_stats[date_str]["fees_usdt"] += prop_fee
+                    pnl_pct_val = (
+                        ((price - entry_avg_cost) / entry_avg_cost * HUNDRED)
+                        if entry_avg_cost > ZERO
+                        else ZERO
+                    )
+                    daily_stats[date_str]["spot_trades"].append({
+                        "id": t.get("id"),
+                        "order_id": t.get("order_id"),
+                        "market": t.get("market"),
+                        "symbol": symbol,
+                        "type": "sell",
+                        "price": _to_float(price),
+                        "amount": _to_float(matched_qty),
+                        "total": _to_float(matched_revenue),
+                        "fee": _to_float(fee_raw * ratio),
+                        "pnl": _to_float(trade_pnl, 2),
+                        "pnl_pct": _to_float(pnl_pct_val, 1),
+                        "timestamp": ts,
+                    })
 
     # 2. Process Futures Past Positions
     for pos in past_positions:
@@ -1042,9 +1192,10 @@ def calculate_daily_pnl_calendar(
         formatted_daily[d] = item
 
     active_days_count = len(formatted_daily)
+    decided_days = winning_days + losing_days
     win_rate = (
-        _to_float((Decimal(winning_days) / Decimal(active_days_count)) * HUNDRED, 1)
-        if active_days_count > 0
+        _to_float((Decimal(winning_days) / Decimal(decided_days)) * HUNDRED, 1)
+        if decided_days > 0
         else 0.0
     )
 
@@ -1086,11 +1237,14 @@ def calculate_equity_curve(
     timeframe: str = "all",  # '7d', '30d', '90d', 'ytd', 'all', 'custom'
     cashflows: Optional[List[Dict[str, Any]]] = None,
     daily_snapshots: Optional[Dict[str, Dict[str, Any]]] = None,
+    inventory_cashflows: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """
     Calculate daily continuous equity curve, cumulative PnL, Time-Weighted Return (TWR),
     and Bitcoin benchmark comparison, cleanly separating external deposits/withdrawals
     from trading performance.
+    `inventory_cashflows` drives Spot WAC crypto withdrawal replay even when `cashflows=[]`
+    (preserving ADR-013 Spot equity isolation).
     """
     if wallets is None:
         wallets = []
@@ -1104,6 +1258,7 @@ def calculate_equity_curve(
         daily_snapshots = {}
 
     effective_from = from_date or (since_date if since_date and since_date not in ("all", "cycle") else None)
+    effective_inventory_cf = inventory_cashflows if inventory_cashflows is not None else cashflows
 
     # 1. Calculate live portfolio value
     port = calculate_portfolio(
@@ -1112,12 +1267,19 @@ def calculate_equity_curve(
         market_prices,
         from_date=effective_from,
         to_date=to_date,
-        cashflows=cashflows,
+        cashflows=effective_inventory_cf,
     )
     current_portfolio_value = D(port.get("summary", {}).get("total_portfolio_value"))
 
     # 2. Get daily pnl breakdown (spot sells + futures closed positions)
-    daily_cal = calculate_daily_pnl_calendar(trades, past_positions, market_prices, from_date=None, to_date=None)
+    daily_cal = calculate_daily_pnl_calendar(
+        trades,
+        past_positions,
+        market_prices,
+        from_date=None,
+        to_date=None,
+        cashflows=effective_inventory_cf,
+    )
     daily_stats = daily_cal.get("daily_stats", {})
 
     # Aggregate daily external cashflows (deposits - withdrawals) in USDT per IRST day

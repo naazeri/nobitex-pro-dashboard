@@ -415,11 +415,11 @@
           <div v-if="summary.best_performer" class="flex items-center gap-2 font-mono">
             <img :src="getAssetIcon(summary.best_performer.symbol)" class="w-6 h-6 rounded-full flex-shrink-0 bg-slate-800 p-0.5 border border-slate-700 object-contain" @error="handleImgError($event)" />
             <span class="text-xl sm:text-2xl font-bold text-white">{{ summary.best_performer.symbol }}</span>
-            <span class="text-xs font-semibold text-emerald-400 bidi-num">+{{ summary.best_performer.pnl_pct.toFixed(1) }}%</span>
+            <span class="text-xs font-semibold bidi-num" :class="summary.best_performer.pnl_pct >= 0 ? 'text-emerald-400' : 'text-rose-400'">{{ formatSignedPercent(summary.best_performer.pnl_pct, 1) }}</span>
           </div>
           <div v-else class="text-sm text-slate-500 mt-1">-</div>
           <div class="text-[10px] text-slate-500 mt-1 truncate">
-            <span class="bidi-num">{{ summary.best_performer ? formatSignedCurrency(summary.best_performer.total_pnl) + ' gain' : t('kpiBestPerformerSub') }}</span>
+            <span class="bidi-num">{{ summary.best_performer ? formatSignedCurrency(summary.best_performer.total_pnl) : t('kpiBestPerformerSub') }}</span>
           </div>
         </div>
 
@@ -4210,7 +4210,7 @@
   <!-- Main Vue 3 Application -->
   <script type="module">
     import { createApp, ref, reactive, computed, onMounted, nextTick, watch } from '/static/vendor/vue.esm-browser.prod.js';
-    import { TRANSLATIONS, formatDate } from '/static/i18n.js?v=2.1.2';
+    import { TRANSLATIONS, formatDate } from '/static/i18n.js?v=2.1.3';
 
     createApp({
       setup() {
@@ -5660,11 +5660,14 @@
                 h.day_high = stat.dayHigh ?? h.day_high;
                 h.day_low = stat.dayLow ?? h.day_low;
                 const qty = Number(h.quantity) || 0;
+                const trackedQty = (h.cost_tracked_qty !== undefined && h.cost_tracked_qty !== null)
+                  ? Number(h.cost_tracked_qty)
+                  : qty;
                 const avgCost = Number(h.avg_cost) || 0;
                 h.current_value = qty * stat.latest;
                 h.is_dust = h.current_value < 1.0;
-                if (qty > 0 && avgCost > 0) {
-                  h.unrealized_pnl = (stat.latest - avgCost) * qty;
+                if (trackedQty > 0 && avgCost > 0) {
+                  h.unrealized_pnl = (stat.latest - avgCost) * trackedQty;
                   h.pnl_pct = ((stat.latest - avgCost) / avgCost) * 100;
                 }
                 h.total_pnl = (Number(h.realized_pnl) || 0) + (Number(h.unrealized_pnl) || 0);
@@ -5677,7 +5680,12 @@
             if (holdingsChanged && summary.value) {
               const usdtCash = Number(summary.value.usdt_cash) || 0;
               const daiCash = Number(summary.value.dai_cash) || 0;
-              const totalPort = totalCryptoVal + usdtCash + daiCash;
+              const usdtRlsStat = statsMap['usdt-rls'];
+              const rlsCashRaw = Number(summary.value.rls_cash) || 0;
+              const rlsCashUsdt = (rlsCashRaw > 0 && usdtRlsStat && usdtRlsStat.latest > 0)
+                ? (rlsCashRaw / usdtRlsStat.latest)
+                : (Number(summary.value.rls_cash_usdt) || 0);
+              const totalPort = totalCryptoVal + usdtCash + daiCash + rlsCashUsdt;
               const totalPnl = totalRealized + totalUnrealized;
               const invested = Number(summary.value.total_invested_capital) || 0;
               summary.value.total_crypto_value = Number(totalCryptoVal.toFixed(2));
@@ -6834,8 +6842,14 @@
           assetTradesLoading.value = true;
           assetTrades.value = [];
           try {
-            const mkt = holding.market || `${holding.symbol}-USDT`;
-            const resp = await fetch(`/api/trades?market=${encodeURIComponent(mkt)}&page_size=100`);
+            const params = new URLSearchParams({
+              symbol: holding.symbol,
+              execution_type: 'spot',
+              page_size: '100',
+            });
+            if (spotDateFrom.value) params.set('from_date', spotDateFrom.value);
+            if (spotDateTo.value) params.set('to_date', spotDateTo.value);
+            const resp = await fetch(`/api/trades?${params.toString()}`);
             if (resp.ok) {
               const data = await resp.json();
               assetTrades.value = data.trades || [];

@@ -317,6 +317,11 @@ def upsert_orders(orders: List[Dict[str, Any]], db_path: Optional[Path] = None) 
                     now_str,
                 ),
             )
+            if str(trade_type).strip().lower() == "margin":
+                cursor.execute(
+                    "UPDATE trades SET trade_type = 'Margin' WHERE order_id = ? AND (trade_type IS NULL OR trade_type != 'Margin')",
+                    (order_id,),
+                )
             count += 1
         conn.commit()
     return count
@@ -406,6 +411,42 @@ def get_max_order_id(db_path: Optional[Path] = None) -> Optional[int]:
     with get_db_connection(db_path) as conn:
         row = conn.execute("SELECT MAX(id) FROM orders").fetchone()
         return int(row[0]) if row and row[0] is not None else None
+
+
+def get_unlinked_trade_order_ids(limit: int = 100, db_path: Optional[Path] = None) -> List[int]:
+    """Return distinct trade.order_id values not yet present in orders table."""
+    init_db(db_path)
+    with get_db_connection(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT t.order_id
+            FROM trades t
+            LEFT JOIN orders o ON t.order_id = o.id
+            WHERE t.order_id IS NOT NULL AND o.id IS NULL
+            ORDER BY t.order_id DESC
+            LIMIT ?
+            """,
+            (int(limit),),
+        ).fetchall()
+        return [int(r[0]) for r in rows if r[0] is not None]
+
+
+def reconcile_trade_types_from_orders(db_path: Optional[Path] = None) -> int:
+    """Backfill trades.trade_type from linked orders.trade_type when mismatched."""
+    init_db(db_path)
+    with get_db_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE trades
+            SET trade_type = (SELECT o.trade_type FROM orders o WHERE o.id = trades.order_id)
+            WHERE order_id IN (SELECT id FROM orders)
+              AND LOWER(COALESCE(trade_type, '')) != LOWER(COALESCE((SELECT o.trade_type FROM orders o WHERE o.id = trades.order_id), ''))
+            """
+        )
+        updated = cursor.rowcount
+        conn.commit()
+        return updated
 
 
 def get_known_closed_position_ids(db_path: Optional[Path] = None) -> set[int]:
@@ -596,6 +637,7 @@ def get_trades(
     trade_type: Optional[str] = None,
     execution_type: Optional[str] = None,
     market: Optional[str] = None,
+    symbol: Optional[str] = None,
     search: Optional[str] = None,
     tag: Optional[str] = None,
     from_date: Optional[str] = None,
@@ -630,6 +672,9 @@ def get_trades(
     if market and market != "ALL":
         conditions.append("market = ?")
         params.append(market.upper())
+    elif symbol and symbol.strip():
+        conditions.append("market LIKE ?")
+        params.append(f"{symbol.strip().upper()}-%")
 
     if search:
         s = f"%{search.strip().lower()}%"
@@ -926,7 +971,7 @@ def get_all_crypto_trades_chronological(
                CASE WHEN LOWER(type) = 'buy' THEN ROUND(MAX(0.0, amount - fee), 8) ELSE NULL END AS net_amount
         FROM trades 
         WHERE {' AND '.join(conditions)}
-        ORDER BY timestamp ASC
+        ORDER BY timestamp ASC, id ASC
     """
     with get_db_connection(db_path) as conn:
         cursor = conn.cursor()

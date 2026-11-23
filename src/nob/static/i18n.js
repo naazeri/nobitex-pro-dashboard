@@ -106,7 +106,7 @@ export const TRANSLATIONS = {
 
     // Spot KPI Cards
     kpiPortfolioValue: "Portfolio Value",
-    kpiPortfolioSub: "Total crypto & cash in USDT",
+    kpiPortfolioSub: "Total crypto, USDT, DAI & IRT in USDT",
     kpiTotalPnl: "Total Spot PnL",
     kpiTotalPnlSub: "Realized + Unrealized profit/loss",
     kpiRealizedPnl: "Realized PnL",
@@ -561,7 +561,7 @@ export const TRANSLATIONS = {
 
     // Spot KPI Cards
     kpiPortfolioValue: "ارزش پورتفولیو",
-    kpiPortfolioSub: "مجموع کریپتو و تتر نقد بر پایه USDT",
+    kpiPortfolioSub: "مجموع رمزارزها و موجودی نقد (تتر، دای، تومان)",
     kpiTotalPnl: "سود و زیان اسپات",
     kpiTotalPnlSub: "مجموع سود محقق‌شده و باز",
     kpiRealizedPnl: "سود محقق‌شده اسپات",

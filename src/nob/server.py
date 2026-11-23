@@ -53,6 +53,8 @@ from nob.db import (
     update_order_status,
     get_max_trade_id,
     get_max_order_id,
+    get_unlinked_trade_order_ids,
+    reconcile_trade_types_from_orders,
     get_known_closed_position_ids,
     get_active_position_ids,
     record_last_sync,
@@ -316,7 +318,15 @@ def api_get_pnl_calendar(
     raw_positions = get_positions(status="past")
     prices = get_market_prices()
     positions = calculate_positions_summary(raw_positions, prices).get("past", [])
-    return calculate_daily_pnl_calendar(trades, positions, prices, from_date=effective_from, to_date=to_date)
+    cashflows = get_cashflows(confirmed_only=True)
+    return calculate_daily_pnl_calendar(
+        trades,
+        positions,
+        prices,
+        from_date=effective_from,
+        to_date=to_date,
+        cashflows=cashflows,
+    )
 
 
 def sync_btc_history_if_needed():
@@ -381,7 +391,8 @@ def api_get_equity_curve(
     else:
         past_positions = []
 
-    cf_list = get_cashflows(confirmed_only=True) if include_cashflows else []
+    all_confirmed_cf = get_cashflows(confirmed_only=True)
+    cf_list = all_confirmed_cf if include_cashflows else []
     snapshots = get_daily_equity_snapshots() if include_cashflows else {}
 
     return calculate_equity_curve(
@@ -396,6 +407,7 @@ def api_get_equity_curve(
         timeframe=timeframe,
         cashflows=cf_list,
         daily_snapshots=snapshots,
+        inventory_cashflows=all_confirmed_cf,
     )
 
 
@@ -422,6 +434,7 @@ def api_get_trades(
     type: Optional[str] = None,
     execution_type: Optional[str] = None,
     market: Optional[str] = None,
+    symbol: Optional[str] = None,
     search: Optional[str] = None,
     tag: Optional[str] = None,
     from_date: Optional[str] = None,
@@ -437,6 +450,7 @@ def api_get_trades(
         trade_type=type,
         execution_type=execution_type,
         market=market,
+        symbol=symbol,
         search=search,
         tag=tag,
         from_date=from_date,
@@ -544,27 +558,35 @@ def perform_sync(full: bool = False):
 
         # 2. Sync real-time market prices (public)
         sync_status["step"] = "Updating market prices..."
+        prices_map: Dict[str, Any] = {}
         try:
-            prices = client.fetch_market_stats()
-            upsert_market_prices(prices)
+            prices_map = client.fetch_market_stats()
+            upsert_market_prices(prices_map)
         except Exception as e:
             print("Notice: Market prices fetch failed:", e)
             warnings_list.append(f"Market prices sync failed: {e}")
 
-        # 3. Sync orders (incremental via fromId when local orders exist)
+        # 3. Sync orders (incremental via dedicated orders cursor in metadata)
         sync_status["step"] = "Fetching user orders..."
         try:
-            max_order_id = None if full else get_max_order_id()
-            if max_order_id is not None:
-                open_orders = client.fetch_all_orders(status="open", page_size=100, max_pages=5)
-                reconcile_open_orders(open_orders)
-                new_orders = client.fetch_incremental_orders(since_id=max_order_id, status="all", page_size=1000)
+            open_orders = client.fetch_all_orders(status="open", page_size=100, max_pages=5)
+            reconcile_open_orders(open_orders)
+
+            cursor_val = None if full else get_metadata_json("orders_sync_cursor_id")
+            if cursor_val is not None:
+                cursor_int = int(cursor_val)
+                new_orders = client.fetch_incremental_orders(since_id=cursor_int, status="all", page_size=1000)
                 if new_orders:
                     upsert_orders(new_orders)
+                    max_new = max((int(o["id"]) for o in new_orders if o.get("id") is not None), default=cursor_int)
+                    set_metadata_json("orders_sync_cursor_id", max(cursor_int, max_new))
             else:
                 orders = client.fetch_all_orders(status="all", page_size=100, max_pages=50)
                 if orders:
                     upsert_orders(orders)
+                    max_id = max((int(o["id"]) for o in orders if o.get("id") is not None), default=None)
+                    if max_id is not None:
+                        set_metadata_json("orders_sync_cursor_id", max_id)
         except NobitexAuthError as e:
             warnings_list.append(f"Orders auth error ({e.code}): {e.message}")
         except Exception as e:
@@ -618,6 +640,24 @@ def perform_sync(full: bool = False):
         # Pass order_type_map=None so upsert_trades uses the complete orders table in SQLite
         saved_count = upsert_trades(trades, order_type_map=None)
 
+        # Backfill any trades missing their linked order, then reconcile Spot vs Margin classification
+        try:
+            missing_oids = get_unlinked_trade_order_ids(limit=50)
+            if missing_oids:
+                fetched_missing: List[Dict[str, Any]] = []
+                for oid in missing_oids:
+                    try:
+                        order_obj = client.fetch_order_status(oid)
+                        if isinstance(order_obj, dict) and order_obj.get("id"):
+                            fetched_missing.append(order_obj)
+                    except Exception:
+                        pass
+                if fetched_missing:
+                    upsert_orders(fetched_missing)
+            reconcile_trade_types_from_orders()
+        except Exception as rec_trade_err:
+            print("Notice: Order-trade reconciliation skipped:", rec_trade_err)
+
         # 6. Refresh cached market metadata (12h TTL) for live leverage, fees & precisions
         try:
             _, mm_stale = get_metadata_cache("margin_markets_cache", ttl_seconds=43200.0)
@@ -639,7 +679,7 @@ def perform_sync(full: bool = False):
             print("Notice: System options metadata refresh failed:", opt_err)
             warnings_list.append(f"System options metadata skipped: {opt_err}")
 
-        # 7. Sync deposits & withdrawals for TWR cashflow reconciliation
+        # 7. Sync deposits & withdrawals for cashflow & crypto inventory reconciliation
         sync_status["step"] = "Syncing deposits & withdrawals..."
         try:
             deposits = client.fetch_all_deposits(page_size=100, max_pages=10)
@@ -652,6 +692,22 @@ def perform_sync(full: bool = False):
             warnings_list.append(f"Deposits sync skipped: {dep_err}")
 
         try:
+            _, tx_dep_stale = get_metadata_cache("crypto_deposits_tx_sync", ttl_seconds=21600.0)
+            if full or tx_dep_stale:
+                tx_deps = client.fetch_deposit_transactions(max_pages=3, page_size=100)
+                crypto_tx_deps = [
+                    d for d in tx_deps
+                    if str(d.get("currency") or "").strip().upper() not in ("", "RLS", "IRR", "IRT")
+                ]
+                if crypto_tx_deps:
+                    upsert_cashflows(crypto_tx_deps, flow_type="deposit")
+                set_metadata_json("crypto_deposits_tx_sync", {"count": len(crypto_tx_deps)})
+        except NobitexAuthError as e:
+            warnings_list.append(f"Crypto deposits sync skipped ({e.code}): {e.message}")
+        except Exception as tx_dep_err:
+            print("Notice: Crypto deposits sync skipped:", tx_dep_err)
+
+        try:
             withdrawals = client.fetch_all_withdrawals(page_size=100, max_pages=10)
             if withdrawals:
                 upsert_cashflows(withdrawals, flow_type="withdraw")
@@ -661,23 +717,56 @@ def perform_sync(full: bool = False):
             print("Notice: Withdrawals sync failed:", wdr_err)
             warnings_list.append(f"Withdrawals sync skipped: {wdr_err}")
 
-        # 8. Optionally fetch Nobitex 30-day portfolio daily total profit snapshots
+        # 8. Optionally fetch Nobitex 30-day portfolio daily profit & balance snapshots
         try:
             _, pf_stale = get_metadata_cache("nobitex_portfolio_profit_cache", ttl_seconds=3600.0)
             if full or pf_stale:
-                pf_total = client.fetch_portfolio_daily_total_profit(monthly=True)
-                if isinstance(pf_total, dict) and pf_total:
-                    set_metadata_json("nobitex_portfolio_profit_cache", pf_total)
-                    data_map = pf_total.get("data") if isinstance(pf_total.get("data"), dict) else {}
+                pf_daily = client.fetch_portfolio_daily_profit(monthly=True)
+                if isinstance(pf_daily, dict) and pf_daily:
+                    set_metadata_json("nobitex_portfolio_profit_cache", pf_daily)
+                    prices_for_rls = prices_map or get_market_prices()
+                    usdt_rls_entry = prices_for_rls.get("usdt-rls") or prices_for_rls.get("usdtrls") or {}
+                    try:
+                        usdt_rls_val = float(usdt_rls_entry.get("latest", 0.0)) if isinstance(usdt_rls_entry, dict) else 0.0
+                    except (ValueError, TypeError):
+                        usdt_rls_val = 0.0
+
                     snap_records = []
-                    for d_key, val in data_map.items():
-                        if isinstance(val, dict) and val.get("totalBalance") is not None:
-                            snap_records.append({
-                                "date": str(d_key)[:10],
-                                "total_equity_usdt": float(val.get("totalBalance", 0.0)),
-                                "net_cashflow_usdt": 0.0,
-                                "source": "nobitex_portfolio",
-                            })
+                    raw_data = pf_daily.get("data")
+                    if isinstance(raw_data, list):
+                        for item in raw_data:
+                            if not isinstance(item, dict):
+                                continue
+                            d_str = str(item.get("report_date") or item.get("date") or "")[:10]
+                            bal_raw = item.get("total_balance") if item.get("total_balance") is not None else item.get("totalBalance")
+                            if d_str and bal_raw is not None and usdt_rls_val > 0:
+                                try:
+                                    bal_rls = float(bal_raw)
+                                    if bal_rls > 0:
+                                        snap_records.append({
+                                            "date": d_str,
+                                            "total_equity_usdt": round(bal_rls / usdt_rls_val, 2),
+                                            "net_cashflow_usdt": 0.0,
+                                            "source": "nobitex_portfolio",
+                                        })
+                                except (ValueError, TypeError):
+                                    pass
+                    elif isinstance(raw_data, dict):
+                        for d_key, val in raw_data.items():
+                            if isinstance(val, dict):
+                                bal_raw = val.get("total_balance") if val.get("total_balance") is not None else val.get("totalBalance")
+                                if bal_raw is not None:
+                                    try:
+                                        bal_num = float(bal_raw)
+                                        eq_usdt = (bal_num / usdt_rls_val) if (val.get("total_balance") is not None and usdt_rls_val > 0) else bal_num
+                                        snap_records.append({
+                                            "date": str(d_key)[:10],
+                                            "total_equity_usdt": round(eq_usdt, 2),
+                                            "net_cashflow_usdt": 0.0,
+                                            "source": "nobitex_portfolio",
+                                        })
+                                    except (ValueError, TypeError):
+                                        pass
                     if snap_records:
                         upsert_daily_equity_snapshots(snap_records)
         except NobitexAPIError as pf_err:

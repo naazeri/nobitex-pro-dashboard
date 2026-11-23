@@ -40,6 +40,7 @@ USER_AGENT = "TraderBot/NobAPI-2.1.0"
 ENDPOINT_RATE_LIMITS: Dict[str, Tuple[int, float, float]] = {
     "/market/trades/list": (28, 60.0, 2.05),          # Official: 30 / min
     "/market/orders/list": (28, 60.0, 2.05),          # Official: 30 / min
+    "/market/orders/status": (280, 60.0, 0.22),       # Official: 300 / min
     "/market/orders/update-status": (85, 60.0, 0.2),  # Official: 90 / min
     "/market/orders/cancel-old": (28, 60.0, 2.05),    # Official: 30 / min
     "/positions/list": (28, 600.0, 0.5),              # Official: 30 / 10 min
@@ -54,8 +55,9 @@ ENDPOINT_RATE_LIMITS: Dict[str, Tuple[int, float, float]] = {
     "/auth/ws/token/": (25, 60.0, 1.0),               # WebSocket JWT token (1200s TTL)
     "/users/portfolio/last-week-daily-profit": (9, 180.0, 2.0),        # Official: 10 / 3 min
     "/users/portfolio/last-week-daily-total-profit": (9, 180.0, 2.0),  # Official: 10 / 3 min
-    "/users/wallets/deposits/list": (18, 60.0, 1.0),                   # User deposits list
-    "/users/wallets/withdraws/list": (18, 60.0, 1.0),                  # User withdrawals list
+    "/users/wallets/deposits/list": (55, 120.0, 1.0),                  # Official: 60 / 2 min
+    "/users/wallets/withdraws/list": (55, 120.0, 1.0),                 # Official: 60 / 2 min
+    "/users/transactions-history": (50, 3600.0, 1.0),                  # Official: 60 / hour
     "/positions/{id}/close": (280, 600.0, 0.25),                       # Official: 300 / 10 min
     "/positions/{id}/edit-collateral": (55, 60.0, 1.0),                # Official: 60 / min
     "/users/limitations": (18, 60.0, 1.0),                             # User tier & limitations
@@ -376,6 +378,8 @@ class NobitexClient:
         """
         Fetch a single page of trades from Nobitex (GET /market/trades/list).
         When from_id is provided, 'page' is omitted so page and fromId are never mixed.
+        Note: `trade_type` maps to `tradeType`, which on this endpoint filters order side
+        ('buy' or 'sell'), NOT Spot vs Margin execution type.
         """
         params: Dict[str, Any] = {
             "pageSize": min(int(page_size), 500),
@@ -645,6 +649,21 @@ class NobitexClient:
                 break
         return all_orders
 
+    def fetch_order_status(self, order_id: int) -> Dict[str, Any]:
+        """
+        Fetch full order metadata (including `tradeType`: Spot vs Margin) via
+        POST /market/orders/status (300 req/min limit).
+        """
+        data = self._request(
+            "POST",
+            "/market/orders/status",
+            body_dict={"id": int(order_id)},
+            auth=True,
+            timeout=15.0,
+        )
+        order_obj = data.get("order")
+        return order_obj if isinstance(order_obj, dict) else data
+
     def fetch_incremental_orders(
         self,
         since_id: int,
@@ -654,45 +673,68 @@ class NobitexClient:
         details: int = 2,
     ) -> List[Dict[str, Any]]:
         """
-        Incrementally fetch orders with id > since_id using fromId (never mixing page & fromId).
+        Incrementally fetch orders with id > since_id.
+        Nobitex /market/orders/list returns results descending (newest first), and
+        combining `fromId` with `page` is forbidden (single-page max 1000 via fromId).
+        If fewer than `page_size` orders return (and hasNext is not True), everything
+        above `since_id` is complete; otherwise fall back to descending page=1..max_batches
+        until reaching `since_id` so intermediate orders are never skipped.
         """
+        since_int = int(since_id)
         effective_page_size = min(int(page_size), 1000)
-        cursor_id = int(since_id) + 1
-        collected: List[Dict[str, Any]] = []
-        seen_ids: set[int] = set()
+        data = self.fetch_orders_page(
+            status=status,
+            page=None,
+            page_size=effective_page_size,
+            from_id=since_int + 1,
+            details=details,
+        )
+        orders = data.get("orders", [])
+        if not orders:
+            return []
 
-        for _ in range(max_batches):
-            data = self.fetch_orders_page(
-                status=status,
-                page=None,
-                page_size=effective_page_size,
-                from_id=cursor_id,
-                details=details,
-            )
-            orders = data.get("orders", [])
-            if not orders:
-                break
-
-            batch_max_id = -1
-            new_in_batch = 0
+        if len(orders) < effective_page_size and data.get("hasNext") is not True:
+            collected: List[Dict[str, Any]] = []
+            seen_ids: set[int] = set()
             for o in orders:
                 oid = o.get("id")
                 if oid is not None:
                     oid_int = int(oid)
-                    if oid_int > batch_max_id:
-                        batch_max_id = oid_int
+                    if oid_int <= since_int or oid_int in seen_ids:
+                        continue
+                    seen_ids.add(oid_int)
+                collected.append(o)
+            return collected
+
+        # Fallback to descending page=1..max_batches so intermediate orders are never skipped
+        collected = []
+        seen_ids = set()
+        page_limit = min(100, effective_page_size)
+        for page in range(1, max(1, int(max_batches)) + 1):
+            p_data = self.fetch_orders_page(
+                status=status,
+                page=page,
+                page_size=page_limit,
+                from_id=None,
+                details=details,
+            )
+            p_orders = p_data.get("orders", [])
+            if not p_orders:
+                break
+            reached_cutoff = False
+            for o in p_orders:
+                oid = o.get("id")
+                if oid is not None:
+                    oid_int = int(oid)
+                    if oid_int <= since_int:
+                        reached_cutoff = True
+                        continue
                     if oid_int in seen_ids:
                         continue
                     seen_ids.add(oid_int)
                 collected.append(o)
-                new_in_batch += 1
-
-            has_next = data.get("hasNext")
-            if has_next is False or len(orders) < effective_page_size or new_in_batch == 0 or batch_max_id < cursor_id:
+            if reached_cutoff or p_data.get("hasNext") is False or len(p_orders) < page_limit:
                 break
-
-            cursor_id = batch_max_id + 1
-
         return collected
 
     def fetch_udf_history(
@@ -943,6 +985,55 @@ class NobitexClient:
                 collected.append(item)
                 new_in_page += 1
             if len(batch) < eff_size or new_in_page == 0:
+                break
+        return collected
+
+    def fetch_transactions_history(
+        self,
+        tp: Optional[str] = None,
+        currency: Optional[str] = None,
+        page: int = 1,
+        page_size: int = 100,
+    ) -> Dict[str, Any]:
+        """
+        Fetch paginated transaction ledger from GET /users/transactions-history (READ permission).
+        Official rate limit: 60 requests / hour.
+        """
+        params: Dict[str, Any] = {
+            "page": int(page),
+            "pageSize": min(int(page_size), 100),
+        }
+        if tp:
+            params["tp"] = str(tp).strip().lower()
+        if currency:
+            params["currency"] = str(currency).strip().lower()
+        return self._request("GET", "/users/transactions-history", params=params, auth=True, timeout=20.0)
+
+    def fetch_deposit_transactions(
+        self, max_pages: int = 3, page_size: int = 100
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch recent deposits from GET /users/transactions-history?tp=deposit.
+        Unlike /users/wallets/deposits/list (which without `wallet` only returns Rial bank deposits),
+        this returns crypto & internal deposits with explicit `currency`.
+        """
+        eff_size = min(int(page_size), 100)
+        collected: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+        for page in range(1, max(1, int(max_pages)) + 1):
+            data = self.fetch_transactions_history(tp="deposit", page=page, page_size=eff_size)
+            batch = data.get("transactions", [])
+            if not isinstance(batch, list) or not batch:
+                break
+            new_in_page = 0
+            for item in batch:
+                key = str(item.get("id") or len(collected))
+                if key in seen:
+                    continue
+                seen.add(key)
+                collected.append(item)
+                new_in_page += 1
+            if data.get("hasNext") is False or len(batch) < eff_size or new_in_page == 0:
                 break
         return collected
 
